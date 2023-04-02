@@ -4,7 +4,7 @@ entrypoints Program ;
 
 Program.   Program ::= [Stmt];
 
-separator  Stmt "" ;
+separator  Stmt ";" ;
 
 -- statements ----------------------------------------------
 
@@ -22,7 +22,7 @@ Empty.     Stmt ::= ";" ;
 
 BStmt.     Stmt ::= Block ;
 
-Decl.      Stmt ::= Type [Item] ";" ;
+Decl.      Stmt ::= Type [Item] ;
 
 NoInit.    Item ::= Ident ; 
 
@@ -30,31 +30,29 @@ Init.      Item ::= Ident "=" Expr ;
 
 separator nonempty Item "," ;
 
-VarAss.    Stmt ::= Ident "=" Expr  ";" ;
+VarAss.    Stmt ::= Ident "=" Expr ;
 
-ArrElAss.  Stmt ::= Ident [ArrArg] "=" Expr ";" ;
+ArrElAss.  Stmt ::= Ident [ArrArg] "=" Expr ;
 
 ArrIdx.    ArrArg ::= "[" Expr "]" ;
 
 separator nonempty ArrArg "" ;
 
-Ret.       Stmt ::= "return" Expr ";" ;
+Ret.       Stmt ::= "return" Expr ;
 
-VRet.      Stmt ::= "return" ";" ;
+Cond.      Stmt ::= "if" "(" Expr ")" Stmt ;
 
-Cond.      Stmt ::= "if" "(" Expr ")" Block  ;
-
-CondElse.  Stmt ::= "if" "(" Expr ")" Block "else" Block  ;
+CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
 
 While.     Stmt ::= "while" "(" Expr ")" Stmt ;
 
-Break.     Stmt ::= "break" ";" ;
+Break.     Stmt ::= "break" ;
 
-Cont.      Stmt ::= "continue" ";" ;
+Cont.      Stmt ::= "continue" ;
 
-Print.     Stmt ::= "print" "(" Expr ")" ";" ;
+Print.     Stmt ::= "print" "(" Expr ")" ;
 
-SExp.      Stmt ::= Expr  ";" ;
+SExp.      Stmt ::= Expr ;
 
 -- Types ---------------------------------------------------
 
@@ -69,8 +67,6 @@ Arr.       Type ::= Type "[]" ;
 -- Expressions ---------------------------------------------
 
 EVar.      Expr6 ::= Ident ;
-
-ELitArr.   Expr6 ::= "[" [Expr] "]" ;
 
 ECrtArr.   Expr6 ::= "new" Type [ArrArg] ;
 
@@ -137,3 +133,4 @@ comment    "/*" "*/" ;
 -- layout ------------------------------------------------
 
 layout     ":" ;
+layout     toplevel ;
