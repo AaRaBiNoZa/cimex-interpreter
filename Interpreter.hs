@@ -11,7 +11,7 @@ import Data.Maybe (fromJust)
 
 import qualified TypeChecker as T
 import TypeChecker (parseType)
-
+import Control.Monad (replicateM)
 
 type Loc = Int
 
@@ -20,10 +20,7 @@ data Error = Error {desc :: String, location :: C.BNFC'Position}
 
 type IEnv = Map C.Ident Loc
 
-data Array a = MulArray {
-    arrayRefs :: Map Int Loc,
-    size :: Int
-} | BaseArray {
+data Array a = Array {
     contents :: Map Int a,
     size :: Int
 } deriving (Show, Eq, Ord)
@@ -31,21 +28,33 @@ data Array a = MulArray {
 incNewLock :: IState -> IState
 incNewLock old = IState {store = store old, newloc = newloc old + 1}
 
--- createBaseArray :: a -> Int -> Array a
--- createBaseArray defaultValue size = (BaseArray {contents = M.fromList [(idx, defaultValue) | idx <- [0..(size - 1)]], size = size})
+createArray :: a -> Int -> Array a
+createArray defaultValue size = (Array {contents = M.fromList [(idx, defaultValue) | idx <- [0..(size - 1)]], size = size})
 
--- allocBaseArray :: T.Type -> Int -> C.BNFC'Position -> IMonad Value
--- allocBaseArray tp size pos = do
---     let val = case tp of
---             T.StrT -> StringArrV $ createBaseArray "" size
---             T.IntT -> IntArrV $ createBaseArray 0 size
---             T.BoolT -> BoolArrV $ createBaseArray False size
---             _notBasicType -> throwError $ Error {desc = "This should have been caught statically", location = pos}
---     newLocation <- gets newloc
---     modify incNewLock
---     modify (\st -> IState {store = M.insert newLocation val $ store st, newloc = newloc st})
+allocArray :: C.BNFC'Position -> T.Type -> [Int] -> IMonad Loc
+allocArray pos tp [] = error "CATASTROPHic error"
+allocArray pos (T.ArrT (T.ArrT tp)) (s:rest) = do
+    subArrayPtrs <- replicateM s (allocArray pos (T.ArrT tp) rest)
 
---     return $ ArrPtr newLocation
+    let val = MultArrV $ Array {contents = M.fromList (zip [0..s - 1] subArrayPtrs), size=s}
+
+    newLocation <- gets newloc
+    modify incNewLock
+    modify (\s -> IState {store = M.insert newLocation val $ store s, newloc = newloc s})
+
+    return newLocation
+
+allocArray pos tp (s:rest) = do
+    let val = case tp of
+            T.ArrT (T.IntT) -> IntArrV $ createArray 0 s
+            T.ArrT (T.StrT) -> StrArrV $ createArray "" s
+            T.ArrT (T.BoolT) -> BoolArrV $ createArray False s
+    
+    newLocation <- gets newloc
+    modify incNewLock
+    modify (\s -> IState {store = M.insert newLocation val $ store s, newloc = newloc s})
+
+    return newLocation
 
 
 data FnArg = ArgVal C.Ident | ArgRef C.Ident
@@ -60,9 +69,11 @@ data Value = StringV String
             | IntV Int
             | BoolV Bool
             | ArrPtr Loc
-            | StringArrV (Array String)
+            | StrArrV (Array String)
             | BoolArrV (Array Bool)
             | IntArrV (Array Int)
+            | ArrV (Array Value)
+            | MultArrV (Array Loc)
             | FuncV Function
     deriving (Show, Eq, Ord)
 
@@ -155,6 +166,16 @@ eval (C.EOr pos e1 e2) = do
 
 eval (C.ECrtArr pos tp args) = do
     let parsedTp = parseType tp
-    case parsedTp of
-        -- T.IntT -> return create
+    parsedArgs <- getArrArgs args
+    ptr <- allocArray pos parsedTp parsedArgs
+    return (ArrPtr ptr)
+
+accessArray :: Loc -> [Int] -> IMonad Value
+acccessArray loc [] = loc
+accessArray loc (s:rest) = do
+
+
+eval (C.EArrGet pos ident args) = do
+    parsedArgs <- getArrArgs args
+
 
