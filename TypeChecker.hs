@@ -1,4 +1,3 @@
-{-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 module TypeChecker where
 
 import qualified Data.Map as M
@@ -11,23 +10,7 @@ import qualified Cimex.Abs as C
 import Control.Monad.Reader
 import Control.Monad.Except
 import Control.Monad.Identity
-import BNFC.Abs (BNFC'Position)
-
-showPos :: BNFC'Position -> String
-showPos (Just (line, col)) = show line ++ ":" ++ show col
-showPos Nothing = "??:??"
-
-showTypeOptions :: Show a => Set a -> String
-showTypeOptions set = go (S.toList set) where
-    go [] = ""
-    go [x] = show x
-    go (x:xs) = show x ++ " | " ++ go xs
-
-parseType :: C.Type -> Type
-parseType (C.Int pos) = IntT
-parseType  (C.Str pos) = StrT
-parseType (C.Bool pos) = BoolT
-parseType (C.Arr pos t) = ArrT (parseType t)
+import Cimex.Abs (BNFC'Position)
 
 -- not importing from Abs, since I don't need position information
 data Type
@@ -45,18 +28,41 @@ data TCEnv = TCEnv {
     insideFunc :: Maybe Type
 } deriving Show
 
+data Error = Error {desc :: String, location :: C.BNFC'Position} deriving Show
+
+type TCMonad a = (ReaderT TCEnv (ExceptT Error Identity)) a
+
+-- UTILITY
 emptyEnv :: TCEnv
 emptyEnv = TCEnv {types = M.empty, blockVars = S.empty, insideLoop = False, insideFunc = Nothing}
 
-type TCMonad a = (ReaderT TCEnv (ExceptT String Identity)) a
+showPos :: BNFC'Position -> String
+showPos (Just (line, col)) = show line ++ ":" ++ show col
+showPos Nothing = "??:??"
 
--- utility functions
+
+showErr :: Error -> String
+showErr (Error desc loc) = desc ++ "\n" ++ showPos loc
+
+showTypeOptions :: Show a => Set a -> String
+showTypeOptions set = go (S.toList set) where
+    go [] = ""
+    go [x] = show x
+    go (x:xs) = show x ++ " | " ++ go xs
+
+parseType :: C.Type -> Type
+parseType (C.Int pos) = IntT
+parseType  (C.Str pos) = StrT
+parseType (C.Bool pos) = BoolT
+parseType (C.Arr pos t) = ArrT (parseType t)
+
+
 checkTypeIsIn :: Type -> Set Type -> C.BNFC'Position ->  TCMonad ()
 checkTypeIsIn t good pos = do
     if S.member t good then
         return ()
     else
-        throwError $ "Type mismatch at " ++ showPos pos ++ "\n Expected types: " ++ showTypeOptions good ++ "\n Got: " ++ show t
+        throwError $ Error ("Type mismatch: \n Expected types: " ++ showTypeOptions good ++ "\n Got: " ++ show t) pos
 
 checkTypeIs :: Type -> Type -> C.BNFC'Position ->  TCMonad ()
 checkTypeIs t1 t2 = checkTypeIsIn t1 (S.singleton t2)
@@ -65,35 +71,38 @@ checkTypeIs t1 t2 = checkTypeIsIn t1 (S.singleton t2)
 getArrayDimSize :: Type -> C.BNFC'Position -> TCMonad Int
 getArrayDimSize arr@(ArrT t) pos = go arr pos where
     go :: Type -> C.BNFC'Position -> TCMonad Int
-    go typ position = case typ of
-        FunT _ _ -> throwError $ "Invalid array type at: " ++ showPos position ++ " functions cannot be elements of an array"
-        ArrT t2 -> do
-            rest  <- go t2 position
+    go tp position = case tp of
+        FunT _ _ -> throwError $ Error "Invalid array type: functions cannot be elements of an array" pos
+        ArrT tp2 -> do
+            rest  <- go tp2 position
             return $ rest + 1
         _basicType -> return 0
-getArrayDimSize _notArray pos = throwError $ "Expected array at " ++ showPos pos
+getArrayDimSize _notArray pos = throwError $ Error "Expected array" pos
 
 isArray :: Type -> Bool
 isArray (ArrT _) = True
 isArray _ = False
 
--- first arg is base type
-createNDimArrayT :: Type -> Int -> Type
-createNDimArrayT t 0 = t
-createNDimArrayT t n = ArrT (createNDimArrayT t (n-1))
+-- creates a type of n-dimensional array of type t
+getNDimArrayT :: Type -> Int -> Type
+getNDimArrayT t 0 = t
+getNDimArrayT t n = ArrT (getNDimArrayT t (n-1))
 
+-- gets base type from n-dimensional array
 getArrayBaseT :: Type -> Type
 getArrayBaseT (ArrT t) = getArrayBaseT t
 getArrayBaseT t = t
 
--- checks if indices are integers and gets number of dimensions
-getArrayIndicesSize :: [C.ArrArg] -> C.BNFC'Position -> TCMonad Int
-getArrayIndicesSize [] pos = return 0
-getArrayIndicesSize ((C.ArrIdx pos2 e):xs) pos1 = do
-    t1 <- typeOf e
-    checkTypeIs t1 IntT pos2
-    rest <- getArrayIndicesSize xs pos2
+-- checks if indices are IntT and gets number of dimensions
+getArrayIndicesSize :: [C.ArrArg] -> TCMonad Int
+getArrayIndicesSize [] = return 0
+getArrayIndicesSize ((C.ArrIdx pos e):xs) = do
+    tp <- typeOf e
+    checkTypeIs tp IntT pos
+    rest <- getArrayIndicesSize xs
     return $ rest + 1
+
+-- TYPECHECKER
 
 typeOf :: C.Expr -> TCMonad Type
 typeOf (C.ELitTrue pos) = return BoolT
@@ -103,7 +112,7 @@ typeOf (C.EString pos _) = return StrT
 typeOf (C.EVar pos v) = do
     typesEnv <- asks types
     case M.lookup v typesEnv of
-        Nothing -> throwError $ "Usage of undeclared variable: " ++ showPos pos
+        Nothing -> throwError $ Error "Usage of undeclared variable" pos
         Just t -> return t
 
 typeOf (C.Neg pos e) = do
@@ -119,21 +128,21 @@ typeOf (C.Not pos e) = do
 typeOf (C.ECrtArr pos t dims) = do
     let tp = parseType t
     typeDims <- getArrayDimSize tp pos
-    indicesDims <- getArrayIndicesSize dims pos
+    indicesDims <- getArrayIndicesSize dims
     if typeDims == indicesDims then
         return tp
     else
-        throwError $ "Invalid dimensions when creating an array on: " ++ showPos pos
+        throwError $ Error "Invalid dimensions when creating an array" pos
 
 typeOf (C.EApp pos ident args) = do
-    eType <- asks (M.lookup ident . types)
-    case eType of
+    fType <- asks (M.lookup ident . types)
+    case fType of
         Just (FunT retType params) -> do
             argsSigs <- mapM getSignature args
             assertArgsMatchParams argsSigs params pos
             return retType
-        Just _ -> throwError $ "Cannot perform function application on not function type at: " ++ showPos pos
-        Nothing -> throwError $ "Function with identifier " ++ show ident ++ " doesn't exist (" ++ showPos pos ++ ")"
+        Just _ -> throwError $ Error "Cannot perform function application on not function type" pos
+        Nothing -> throwError $ Error ("Function with identifier " ++ show ident ++ " doesn't exist") pos
     where
         getSignature :: C.Expr -> TCMonad (Type, Bool, C.BNFC'Position)
         getSignature arg = do
@@ -143,27 +152,28 @@ typeOf (C.EApp pos ident args) = do
 
         assertArgsMatchParams :: [(Type, Bool, C.BNFC'Position)] -> [(Type, Bool)] -> C.BNFC'Position -> TCMonad ()
         assertArgsMatchParams [] [] appPos = return ()
-        assertArgsMatchParams argsSigs [] appPos = throwError $ "Too many arguments in function application at: " ++ showPos appPos
-        assertArgsMatchParams [] params appPos = throwError $ "Not enough arguments in function application at: " ++ showPos appPos
+        assertArgsMatchParams argsSigs [] appPos = throwError $ Error "Too many arguments in function application" appPos
+        assertArgsMatchParams [] params appPos = throwError $ Error "Not enough arguments in function application" appPos
         assertArgsMatchParams ((t1, canRef, argPos):r1) ((t2, shouldBeRef):r2) appPos
           | t1 /= t2 =
-            throwError $ "Argument type does not match parameter type at: " ++ showPos argPos
+            throwError $ Error "Argument type does not match parameter type at: " argPos
           | not canRef && shouldBeRef =
-            throwError $ "Argument needs to be a variable (reference error) at: " ++ showPos argPos
+            throwError $ Error "Argument needs to be a variable (reference error)" argPos
           | otherwise =
             assertArgsMatchParams r1 r2 appPos
 
 typeOf (C.EArrGet pos ident idxs) = do
     tp <- asks (M.lookup ident . types)
     case tp of
-        Nothing -> throwError $ "Undeclared array at: " ++ showPos pos
-        Just arr -> do
+        Nothing -> throwError $ Error "Undeclared variable" pos
+        Just arr@(ArrT _) -> do
             typeDims <- getArrayDimSize arr pos
-            indicesDims <- getArrayIndicesSize idxs pos
+            indicesDims <- getArrayIndicesSize idxs
             if typeDims >= indicesDims then
-                return $ createNDimArrayT (getArrayBaseT arr) (typeDims - indicesDims)
+                return $ getNDimArrayT (getArrayBaseT arr) (typeDims - indicesDims)
             else
-                throwError $ "Too many indices for this array at: " ++ showPos pos
+                throwError $ Error "Too many indices for this array" pos
+        _notArray -> throwError $ Error ("Variable : " ++ show ident ++ " is not an array") pos 
 
 typeOf (C.EAdd pos e1 op e2) = do
     t1 <- typeOf e1
@@ -180,7 +190,9 @@ typeOf (C.ERel pos e1 (C.EQU relpos) e2) = do
     if t1 == t2 then
         return BoolT
     else
-        throwError $ "Comparison on two different types at: " ++ showPos pos
+        throwError $ Error "Comparison on two different types " pos
+
+typeOf (C.ERel pos eq (C.NE relpos) e2) = typeOf (C.ERel pos eq (C.EQU relpos) e2)
 
 typeOf (C.ERel pos e1 op e2) = do
     t1 <- typeOf e1
@@ -208,32 +220,36 @@ checkStatement :: C.Stmt -> TCMonad TCEnv
 checkStatement (C.FnDef pos retType ident params block) = do
     curBlockVars <- asks blockVars
     if S.member ident curBlockVars then
-        throwError $ "Cannot redefine function in the same block at: " ++ showPos pos
+        throwError $ Error "Cannot redefine function in the same block"  pos
     else do
         paramsSignatures <- mapM paramSignature params
         env <- ask
         let fnType = FunT (parseType retType) paramsSignatures
-        let typesWithFunction = M.insert ident fnType (types env)
+        let updatedEnvWithFunction = M.insert ident fnType (types env) -- env that includes this function's type
         fnBodyBlockVarsAndTypes <- createBlockVarsAndTypesFromParams params
-        local (const TCEnv {types = M.union (snd fnBodyBlockVarsAndTypes) typesWithFunction , blockVars = fst fnBodyBlockVarsAndTypes, insideLoop = insideLoop env, insideFunc = Just fnType}) (checkBlock block)
-        return (TCEnv {types = typesWithFunction, blockVars = blockVars env, insideLoop = insideLoop env, insideFunc = insideFunc env})
+        -- union is left biased
+        local (const TCEnv {types = M.union (snd fnBodyBlockVarsAndTypes) updatedEnvWithFunction , blockVars = fst fnBodyBlockVarsAndTypes, insideLoop = insideLoop env, insideFunc = Just fnType}) (checkBlock block)
+        return $ env {types = updatedEnvWithFunction}
 
     where
         paramSignature :: C.Arg -> TCMonad (Type, Bool)
         paramSignature (C.ArgVal pos tp ident) = case parseType tp of
-            FunT _ _ -> throwError $ "Functions cannot be function parameters at: " ++ showPos pos
+            FunT _ _ -> throwError $ Error "Functions cannot be function parameters" pos
             goodType -> return (goodType, False)
         paramSignature (C.ArgRef pos tp ident) = do
             case parseType tp of
-                FunT _ _ -> throwError $ "Functions cannot be function parameters at: " ++ showPos pos
-                ArrT _ -> throwError $ "Arrays are passed by reference only - cannot get reference to reference at: " ++ showPos pos
+                FunT _ _ -> throwError $ Error "Functions cannot be function parameters" pos
+                ArrT _ -> throwError $ Error "Arrays are passed by reference by default - cannot get reference to reference" pos
                 goodTp -> return (goodTp, True)
+
+        -- goes over parameters one by one and prepares types and blockVars of env
+        -- to be used when typechecking function body
         createBlockVarsAndTypesFromParams :: [C.Arg] -> TCMonad (Set C.Ident, Map C.Ident Type)
         createBlockVarsAndTypesFromParams [] = return (S.empty, M.empty)
         createBlockVarsAndTypesFromParams ((C.ArgVal pos tp ident):rest) = do
             curBlock <- createBlockVarsAndTypesFromParams rest
             if S.member ident (fst curBlock) then
-                throwError $ "Function parameters doubled at: " ++ showPos pos
+                throwError $ Error "Function parameters doubled" pos
             else
                 return (S.insert ident $ fst curBlock, M.insert ident (parseType tp) $ snd curBlock)
         createBlockVarsAndTypesFromParams ((C.ArgRef pos tp ident):rest) = createBlockVarsAndTypesFromParams ((C.ArgVal pos tp ident):rest)
@@ -241,50 +257,56 @@ checkStatement (C.FnDef pos retType ident params block) = do
 checkStatement (C.Empty pos) = ask
 checkStatement (C.BStmt pos block) = do
     env <- ask
-    local (const TCEnv {types = types env, blockVars = S.empty, insideLoop = insideLoop env, insideFunc = insideFunc env}) $ checkBlock block
+    local (const env {blockVars = S.empty}) $ checkBlock block
+
     return env
+
 checkStatement (C.Decl pos tp []) = ask
+
 checkStatement (C.Decl pos tp (item:rest)) = do
     env <- ask
-    let gtp = parseType tp
+    let parsedTp = parseType tp
+
     case item of
         C.NoInit posDec ident -> if S.member ident $ blockVars env then
-                                    throwError $ "Cannot redeclare a variable in the same block at: " ++ showPos posDec
+                                    throwError $ Error "Cannot redeclare a variable in the same block" posDec
                                 else
-                                    local (const TCEnv {types = M.insert ident gtp $ types env, blockVars = S.insert ident $ blockVars env, insideLoop = insideLoop env, insideFunc = insideFunc env}) $ checkStatement (C.Decl pos tp rest)
+                                    local (const env {types = M.insert ident parsedTp $ types env, blockVars = S.insert ident $ blockVars env}) $ checkStatement (C.Decl pos tp rest)
         C.Init posDec ident e -> if S.member ident $ blockVars env then
-                                    throwError $ "Cannot redeclare a variable in the same block at: " ++ showPos posDec
+                                    throwError $ Error "Cannot redeclare a variable in the same block" posDec
                                 else do
                                     eType <- typeOf e
-                                    checkTypeIs eType gtp posDec
-                                    local (const TCEnv {types = M.insert ident gtp $ types env, blockVars = S.insert ident $ blockVars env, insideLoop = insideLoop env, insideFunc = insideFunc env}) $ checkStatement (C.Decl pos tp rest)
+                                    checkTypeIs eType parsedTp posDec
+                                    local (const env {types = M.insert ident parsedTp $ types env, blockVars = S.insert ident $ blockVars env}) $ checkStatement (C.Decl pos tp rest)
 checkStatement (C.VarAss pos ident expr) = do
     eType <- typeOf expr
     identType <- asks (M.lookup ident . types)
     case identType of
-        Nothing -> throwError $ "Assignment to undeclared variable at: " ++ showPos pos
-        Just tp -> if tp /= eType then throwError $ "Wrong expression type at: " ++ showPos pos else ask
+        Nothing -> throwError $ Error "Assignment to undeclared variable" pos
+        Just tp -> if tp /= eType then throwError $ Error "Wrong expression type" pos else ask
 
 checkStatement (C.ArrElAss pos ident indices expr) = do
     identType <- asks (M.lookup ident . types)
     exprType <- typeOf expr
     case identType of
-        Nothing -> throwError $ "Assignment to undeclared variable at: " ++ showPos pos
-        Just tp -> do
+        Nothing -> throwError $ Error "Assignment to undeclared variable" pos
+        Just tp@(ArrT _) -> do
             arrDims <- getArrayDimSize tp pos
-            indicesDims <- getArrayIndicesSize indices pos
+            indicesDims <- getArrayIndicesSize indices
             if arrDims >= indicesDims then do
-                checkTypeIs exprType (createNDimArrayT (getArrayBaseT tp) (arrDims - indicesDims)) pos
+                checkTypeIs exprType (getNDimArrayT (getArrayBaseT tp) (arrDims - indicesDims)) pos
                 ask
             else
-                throwError $ "Invalid array assignment at: " ++ showPos pos
+                throwError $ Error "Invalid array assignment" pos
+        Just _notArray -> throwError $ Error ("Variable " ++ show ident ++ " is not an array") pos
 
 checkStatement (C.Ret pos e) = do
     funcSig <- asks insideFunc
     retExprType <- typeOf e
     case funcSig of
-        Nothing -> throwError $ "Return outside of function at: " ++ showPos pos
-        Just (FunT retType paramSigs) -> if retType /= retExprType then throwError ("Invalid return type at: " ++ showPos pos) else ask
+        Nothing -> throwError $ Error "Return outside of function" pos
+        Just (FunT retType paramSigs) -> if retType /= retExprType then throwError $ Error "Invalid return type"  pos else ask
+        _notFunT -> throwError $ Error "Panic!" pos
 
 checkStatement (C.Cond pos e stmt) = do 
     eType <- typeOf e
@@ -298,18 +320,20 @@ checkStatement (C.CondElse pos e st1 st2) = do
     checkStatement st1
     checkStatement st2
     ask
+
 checkStatement (C.While pos e stmt) = do
     env <- ask
     eType <- typeOf e
     checkTypeIs eType BoolT pos
-    local (const TCEnv {types = types env, blockVars = blockVars env, insideLoop = True, insideFunc = insideFunc env}) (checkStatement stmt)
-    ask
+    local (const env {insideLoop = True}) (checkStatement stmt)
+    return env
+
 checkStatement (C.Break pos) = do
-    isInLoop <- asks (insideLoop)
-    if isInLoop then ask else throwError $ "break outside of loop at: " ++ showPos pos
+    isInLoop <- asks insideLoop
+    if isInLoop then ask else throwError $ Error "Break outside of loop" pos
 checkStatement (C.Cont pos) = do 
-    isInLoop <- asks (insideLoop)
-    if isInLoop then ask else throwError $ "continue outside of loop at: " ++ showPos pos
+    isInLoop <- asks insideLoop
+    if isInLoop then ask else throwError $ Error "Continue outside of loop" pos
 
 checkStatement (C.Print pos e) = do
     typeOf e
@@ -319,16 +343,16 @@ checkStatement (C.SExp pos e ) = do
     typeOf e
     ask
 
-runType :: C.Expr -> Either String Type
+runType :: C.Expr -> Either Error Type
 runType e = runIdentity $ runExceptT $ runReaderT (typeOf e) emptyEnv
 runTypeMonad x env = runIdentity $ runExceptT $ runReaderT x env
 
-example :: Either String TCEnv
+example :: Either Error TCEnv
 example = runTypeMonad (checkStatement (C.VarAss Nothing (C.Ident "x") (C.EVar Nothing (C.Ident "x")))) (TCEnv {types = M.fromList [(C.Ident "x", IntT), (C.Ident "y", BoolT)], blockVars = S.empty, insideFunc = Nothing, insideLoop = False})
 
 checkProgram :: C.Program -> TCMonad ()
 checkProgram (C.Program pos stmts) = do
     checkBlock (C.Block pos stmts)
 
-runTypeCheck :: C.Program -> Either String ()
-runTypeCheck program = runIdentity $ runExceptT $ runReaderT (checkProgram program) emptyEnv
+runTypeCheck :: C.Program -> Either Error ()
+runTypeCheck program = runIdentity (runExceptT (runReaderT (checkProgram program) emptyEnv))

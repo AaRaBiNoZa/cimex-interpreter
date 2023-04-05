@@ -40,9 +40,9 @@ separator nonempty ArrArg "" ;
 
 Ret.       Stmt ::= "return" Expr ;
 
-Cond.      Stmt ::= "if" "(" Expr ")" Stmt ;
+Cond.      Stmt ::= "if" "(" Expr ")" Stmt ";" "endif" ;
 
-CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt  ;
+CondElse.  Stmt ::= "if" "(" Expr ")" Stmt ";" "else" Stmt ";" "endif"  ;
 
 While.     Stmt ::= "while" "(" Expr ")" Stmt ;
 
