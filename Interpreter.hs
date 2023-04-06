@@ -34,9 +34,10 @@ data FnArg = ArgVal C.Ident | ArgRef C.Ident
     deriving (Show, Eq, Ord)
 
 data Function = Fn {
-    args :: [FnArg],
+    params :: [FnArg],
     body :: C.Block,
-    frozenEnv :: IEnv
+    frozenEnv :: IEnv,
+    defaultValue :: Value
 } deriving (Show, Eq, Ord)
 
 data Value = StrV String
@@ -114,15 +115,6 @@ setArray (ArrPtr loc) (i:idxs) val pos = do
     setArray next idxs val pos
 setArray _ _ _ pos = throwError $ Error "Catastrophic error - invalid array assign" pos
 
-
-
-withoutLast :: [Int] -> (Int, [Int])
-withoutLast [] = (0, [])
-withoutLast [x] = (x, [])
-withoutLast (x:xs) = (l, x:t) where (l, t) = withoutLast xs
-
-
-
 eval :: C.Expr -> IMonad Value
 eval (C.EVar pos ident) = do
     Just loc <- asks (M.lookup ident . env)
@@ -196,7 +188,47 @@ eval (C.EArrGet pos ident args) = do
 
 eval (C.EString pos str) = return $ StrV str
 
-eval (C.EApp pos ident fnArgs) = undefined
+eval (C.EApp pos ident fnArgs) = do
+    Just fcLoc <- asks (M.lookup ident . env)
+    Just (FuncV fc) <- gets (M.lookup fcLoc . store)
+
+    let fEnv = frozenEnv fc
+    let envForRec = fEnv {env = M.insert ident fcLoc (env fEnv)}
+
+    execEnv <- prepareEnvForFExecution pos (params fc) fnArgs envForRec
+
+    result <- local (const execEnv) (execBlock (body fc))
+
+    case result of
+        RetF val -> return val
+        NoF -> return $ defaultValue fc
+        _ -> throwError $ Error "Catastrophic error - break/continue got out of a function" pos
+    where
+        prepareEnvForFExecution :: C.BNFC'Position -> [FnArg] -> [C.Expr] -> IEnv -> IMonad IEnv
+        prepareEnvForFExecution pos [] [] oldEnv = return oldEnv
+        prepareEnvForFExecution pos (param:prest) (arg:argrest) oldEnv = do
+            e <- ask
+            newEnv <- case (param, arg) of
+                    (ArgVal ident, _) -> do
+                        val <- eval arg
+
+                        newLocation <- gets newloc
+                        modify incNewLock
+                        modify (\s -> s {store = M.insert newLocation val (store s)})
+
+                        return $ e {env = M.insert ident newLocation (env e)}
+                    (ArgRef ident, C.EVar pos refIdent) -> do
+                        Just ref <- asks (M.lookup refIdent . env)
+
+                        return $ e {env = M.insert ident ref (env e)}
+                    (_, _) -> throwError $ Error "Catastrophic error - invalid function execution" pos
+
+            prepareEnvForFExecution pos prest argrest newEnv
+        prepareEnvForFExecution pos _ _ _ = throwError $ Error "Catastrophic error - arguments/parameters don't match" pos
+    
+
+
+
 
 
 
@@ -291,10 +323,6 @@ exec (C.While pos expr st) = do
     else
         ask
 
-
-exec (C.FnDef a _ _ _ _) = undefined
-
-
 exec (C.SExp pos expr) = do
     val <- eval expr
     ask
@@ -308,26 +336,39 @@ exec (C.Print pos expr) = do
 
 exec (C.ArrElAss pos ident idxs expr) = do
     val <- eval expr
-    indexes <- getArrArgs idxs
-    let (last, t) = withoutLast indexes 
+    indices <- getArrArgs idxs
+
     Just loc <- asks (M.lookup ident . env)
     Just arrPtr <- gets (M.lookup loc . store)
 
-    setArray arrPtr indexes val pos
+    setArray arrPtr indices val pos
 
     ask
 
 
     
--- exec (C.FnDef pos tp ident args block) = do
-    -- oldEnv <- ask
-    -- newLocation <- gets newloc
-    -- let newEnv = M.insert ident newLocation oldEnv
+exec (C.FnDef pos tp ident params block) = do
+    e <- ask
+    let parsedParams = parseParams params
+    defVal <- case parseType tp of 
+            T.BoolT -> return $ BoolV False
+            T.StrT -> return $ StrV ""
+            T.IntT -> return $ IntV 0
+            T.ArrT _ -> return $ ArrPtr 0
+            _ -> throwError $ Error "Catastrophic error - invalid fn type somehow" pos
 
-    -- modify incNewLock
-    -- modify (\s -> IState {store = M.insert newLocation (FuncV (Fn args block oldEnv)) (store s), newloc =  newloc s})
+    let fc = Fn {params = parsedParams, body = block, frozenEnv = e, defaultValue = defVal}
 
-    -- return (Res oldEnv NoF)
+    newLocation <- gets newloc
+    modify incNewLock
+    modify (\s -> s {store = M.insert newLocation (FuncV fc) (store s)})
+    return (e {env = M.insert ident newLocation (env e)}) where
+        parseParams :: [C.Arg] -> [FnArg]
+        parseParams = map go where
+            go (C.ArgVal pos tp ident) = ArgVal ident
+            go (C.ArgRef pos tp ident) = ArgRef ident
+
+
         
 
 execProgram :: C.Program -> IMonad ()
