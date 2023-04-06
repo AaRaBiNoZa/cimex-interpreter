@@ -20,60 +20,15 @@ type Loc = Int
 data IState = IState {store :: Map Loc Value, newloc :: Loc} deriving Show
 data Error = Error {desc :: String, location :: C.BNFC'Position} deriving Show
 
-type IEnv = Map C.Ident Loc
+data IEnv = Env {env :: Map C.Ident Loc, flag :: Flag} deriving (Show, Eq, Ord)
+
+data Flag = RetF Value | BreakF | ContF | NoF deriving (Show, Eq, Ord)
 
 data Array a = Array {
     contents :: Map Int a,
     size :: Int
 } deriving (Show, Eq, Ord)
 
-incNewLock :: IState -> IState
-incNewLock old = IState {store = store old, newloc = newloc old + 1}
-
-createArray :: a -> Int -> Array a
-createArray defaultValue size = (Array {contents = M.fromList [(idx, defaultValue) | idx <- [0..(size - 1)]], size = size})
-
-allocArray :: C.BNFC'Position -> T.Type -> [Int] -> IMonad Value
-allocArray pos tp [] = error "CATASTROPHic error"
-allocArray pos (T.ArrT (T.ArrT tp)) (s:rest) = do
-    subArrayPtrs <- replicateM s (allocArray pos (T.ArrT tp) rest)
-
-    let val = ArrV $ Array {contents = M.fromList (zip [0..s - 1] subArrayPtrs), size=s}
-
-    newLocation <- gets newloc
-    modify incNewLock
-    modify (\s -> IState {store = M.insert newLocation val $ store s, newloc = newloc s})
-
-    return (ArrPtr newLocation)
-
-allocArray pos tp (s:rest) = do
-    let val = case tp of
-            T.ArrT (T.IntT) -> ArrV $ createArray (IntV 0) s
-            T.ArrT (T.StrT) -> ArrV $ createArray (StrV "") s
-            T.ArrT (T.BoolT) -> ArrV $ createArray (BoolV False) s
-
-    newLocation <- gets newloc
-    modify incNewLock
-    modify (\s -> IState {store = M.insert newLocation val $ store s, newloc = newloc s})
-
-    return (ArrPtr newLocation)
-
-
-accessArray :: Value -> [Int] -> IMonad Value
-acccessArray ptrOrVal [] = return ptrOrVal
-accessArray (ArrPtr loc) (s:rest) = do
-    arrValue <- gets (M.lookup loc . store)
-    let (ArrV arr) = fromJust arrValue
-
-    let nextInLine = M.lookup s $ contents arr
-
-    accessArray (fromJust nextInLine) rest
-accessArray _ _ = error "CATASTROPHIC"
-
-withoutLast :: [Int] -> (Int, [Int])
-withoutLast [] = (0, [])
-withoutLast [x] = (x, [])
-withoutLast (x:xs) = (l, x:t) where (l, t) = withoutLast xs
 
 data FnArg = ArgVal C.Ident | ArgRef C.Ident
     deriving (Show, Eq, Ord)
@@ -81,7 +36,7 @@ data FnArg = ArgVal C.Ident | ArgRef C.Ident
 data Function = Fn {
     args :: [FnArg],
     body :: C.Block,
-    env :: IEnv
+    frozenEnv :: IEnv
 } deriving (Show, Eq, Ord)
 
 data Value = StrV String
@@ -93,11 +48,15 @@ data Value = StrV String
     deriving (Show, Eq, Ord)
 
 
-
 type IMonad a = StateT IState (ReaderT IEnv (ExceptT Error IO)) a
 
-data StmtResFlag = RetF Value | BreakF | ContF | NoF
-data StmtReturn = StmtReturn {retEnv :: IEnv, flag :: StmtResFlag}
+
+incNewLock :: IState -> IState
+incNewLock old = IState {store = store old, newloc = newloc old + 1}
+
+createArray :: a -> Int -> Array a
+createArray defaultValue size = (Array {contents = M.fromList [(idx, defaultValue) | idx <- [0..(size - 1)]], size = size})
+
 
 getArrArgs :: [C.ArrArg] -> IMonad [Int]
 getArrArgs = mapM evalArg where
@@ -111,43 +70,74 @@ getArrArgs = mapM evalArg where
             return value
 
 
+allocArray :: C.BNFC'Position -> T.Type -> [Int] -> IMonad Value
+allocArray pos tp [] = throwError $ Error "Catastrophic error - cannot create null dimensional array" pos
+allocArray pos (T.ArrT tp) (s:rest) = do
+    val <- case tp of
+        T.IntT -> return (ArrV $ createArray (IntV 0) s)
+        T.StrT -> return (ArrV $ createArray (StrV "") s)
+        T.BoolT -> return (ArrV $ createArray (BoolV False) s)
+        T.ArrT subTp -> do
+            subArrayPtrs <- replicateM s (allocArray pos (T.ArrT subTp) rest)
+            return (ArrV $ Array {contents = M.fromList (zip [0..s - 1] subArrayPtrs), size=s})
+        _ -> throwError $ Error "Catastrophic error - cannot create array of functions" pos
+
+    newLocation <- gets newloc
+    modify incNewLock
+    modify (\s -> IState {store = M.insert newLocation val $ store s, newloc = newloc s})
+
+    return (ArrPtr newLocation)
+
+allocArray pos _ _ = throwError $ Error "Catastrophic error - wrong type for alloc array" pos
+
+accessArray :: Value -> [Int] -> C.BNFC'Position -> IMonad Value
+accessArray ptrOrVal [] pos = return ptrOrVal
+accessArray (ArrPtr loc) (s:rest) pos = do
+    Just (ArrV arr) <- gets (M.lookup loc . store)
+
+    let Just next = M.lookup s $ contents arr
+
+    accessArray next rest pos
+accessArray _ _ pos = throwError $ Error "Catastrophic error - invalid arrray access" pos
+
+withoutLast :: [Int] -> (Int, [Int])
+withoutLast [] = (0, [])
+withoutLast [x] = (x, [])
+withoutLast (x:xs) = (l, x:t) where (l, t) = withoutLast xs
+
+
+
 eval :: C.Expr -> IMonad Value
 eval (C.EVar pos ident) = do
-    loc <- asks (M.lookup ident)
-    val <- gets (M.lookup (fromJust loc) . store)
-    return $ fromJust val
+    Just loc <- asks (M.lookup ident . env)
+    Just val <- gets (M.lookup loc . store)
+    return val
 
 eval (C.ELitInt pos int) = return (IntV (fromInteger int))
 eval (C.ELitTrue pos) = return (BoolV True)
 eval (C.ELitFalse pos) = return (BoolV False)
 eval (C.Neg pos e) = do
-    v <- eval e
-    let (IntV value) = v
-    return $ IntV (- value)
+    IntV v <- eval e
+    return $ IntV (- v)
 eval (C.Not pos e) = do
-    v <- eval e
-    let (BoolV bool) = v
+    BoolV bool <- eval e
     return $ BoolV (not bool)
 eval (C.EMul pos e1 op e2) = do
-    v1 <- eval e1
-    v2 <- eval e2
-    let (IntV value1) = v1
-    let (IntV value2) = v2
+    IntV v1 <- eval e1
+    IntV v2 <- eval e2
 
     case op of
-        C.Times _ -> return $ IntV (value1 * value2)
-        C.Div _ -> return $ IntV (value1 `div` value2)
-        C.Mod _ -> return $ IntV (value1 `mod` value2)
+        C.Times _ -> return $ IntV (v1 * v2)
+        C.Div _ -> return $ IntV (v1 `div` v2)
+        C.Mod _ -> return $ IntV (v1 `mod` v2)
 
 eval (C.EAdd pos e1 op e2) = do
-    v1 <- eval e1
-    v2 <- eval e2
-    let (IntV value1) = v1
-    let (IntV value2) = v2
+    IntV v1 <- eval e1
+    IntV v2 <- eval e2
 
     case op of
-        C.Plus _ -> return $ IntV (value1 + value2)
-        C.Minus _ -> return $ IntV (value1 - value2)
+        C.Plus _ -> return $ IntV (v1 + v2)
+        C.Minus _ -> return $ IntV (v1 - v2)
 
 eval (C.ERel pos e1 op e2) = do
     v1 <- eval e1
@@ -164,21 +154,15 @@ eval (C.ERel pos e1 op e2) = do
     return $ BoolV res
 
 eval (C.EAnd pos e1 e2) = do
-    v1 <- eval e1
-    v2 <- eval e2
-
-    let (BoolV bool1) = v1
-    let (BoolV bool2) = v2
+    BoolV bool1 <- eval e1
+    BoolV bool2 <- eval e2
 
     return $ BoolV (bool1 && bool2)
 
 
 eval (C.EOr pos e1 e2) = do
-    v1 <- eval e1
-    v2 <- eval e2
-
-    let (BoolV bool1) = v1
-    let (BoolV bool2) = v2
+    BoolV bool1 <- eval e1
+    BoolV bool2 <- eval e2
 
     return $ BoolV (bool1 || bool2)
 
@@ -190,87 +174,76 @@ eval (C.ECrtArr pos tp args) = do
 
 eval (C.EArrGet pos ident args) = do
     parsedArgs <- getArrArgs args
-    Just loc <- asks (M.lookup ident)
-    acccessArray (ArrPtr loc) parsedArgs
+    Just loc <- asks (M.lookup ident . env)
+    accessArray (ArrPtr loc) parsedArgs pos
 
 eval (C.EString pos str) = return $ StrV str
 
--- eval (C.EApp pos ident fnArgs) = do
---     Just functionLoc <- asks (M.lookup ident)
---     Just (Function f) <- gets (M.lookup functionLoc . store)
+eval (C.EApp pos ident fnArgs) = undefined
 
 
 
-execBlock :: C.Block -> IMonad StmtResFlag
+execBlock :: C.Block -> IMonad Flag
 
 execBlock (C.Block pos []) = return NoF
 execBlock  (C.Block pos (s:stmts)) = do
-    newEnvAndF <- exec s
-    case flag newEnvAndF of
-        NoF -> local (const (retEnv newEnvAndF)) (execBlock $ C.Block pos stmts)
+    newEnv <- exec s
+    case flag newEnv of
+        NoF -> local (const newEnv) (execBlock $ C.Block pos stmts)
         validFlag -> return validFlag
 
-exec :: C.Stmt -> IMonad StmtReturn
-exec (C.Empty pos) = do
-    env <- ask
-    return (StmtReturn {retEnv = env, flag = NoF})
+exec :: C.Stmt -> IMonad IEnv
+exec (C.Empty pos) = ask
 
 exec (C.BStmt pos block) = do
-    env <- ask
+    e <- ask
     flag <- execBlock block
-    return (StmtReturn {retEnv = env, flag = flag})
+    return e {flag = flag}
 
-exec (C.Decl pos tp []) = do
-    env <- ask
-    return (StmtReturn env NoF)
+exec (C.Decl pos tp []) = ask
 exec (C.Decl pos tp (i:its)) = do
     let parsedType = parseType tp
-    env <- ask
     val <- case (parsedType, i) of
-            (_, C.Init pos ident expr) -> (eval expr)
+            (_, C.Init pos ident expr) -> eval expr
             (T.StrT, _) -> return $ StrV ""
             (T.IntT, _) -> return $ IntV 0
             (T.BoolT, _) -> return $ BoolV False
             (T.ArrT _, _) -> return $ ArrPtr 0
-            _ -> error "CATASTROPHIC"
-    let ident = case (i) of
-            C.Init pos iden expr -> iden
-            C.NoInit pos iden -> iden
+            (_, _) -> throwError $ Error "Catastrophic error - declaring a function somehow" pos
+    let ident = case i of
+            C.Init pos iden expr -> ident
+            C.NoInit pos iden -> ident
 
+    e <- ask
     newLocation <- gets newloc
     modify incNewLock
-    let newEnv = M.insert ident newLocation env
+    let newEnv = M.insert ident newLocation (env e)
     modify (\s ->IState {store = M.insert newLocation val $ store s, newloc = newloc s})
 
-    return StmtReturn {retEnv = newEnv, flag = NoF}
+    return e {env = newEnv}
 
 exec (C.VarAss pos ident expr) = do
-    env <- ask
     val <- eval expr
-    valLoc <- asks (M.lookup ident)
-    let valAddr = fromJust valLoc
+    Just valLoc <- asks (M.lookup ident . env)
 
-
-    modify (\s -> IState {store = M.insert valAddr val (store s), newloc = newloc s})
-    return (StmtReturn env NoF)
+    modify (\s -> IState {store = M.insert valLoc val (store s), newloc = newloc s})
+    ask
 
 exec (C.Ret pos expr) = do
     value <- eval expr
-    env <- ask
+    e <- ask
 
-    return (StmtReturn env $ RetF value)
+    return e {flag = RetF value}
 
 exec (C.Cond pos expr stmt) = do
-    env <- ask
     (BoolV bool) <- eval expr
 
     if bool then
         exec stmt
     else
-        return (StmtReturn env NoF)
+        ask
 
 exec (C.CondElse pos expr st1 st2) = do
-    env <- ask
     (BoolV bool) <- eval expr
 
     if bool then
@@ -279,50 +252,48 @@ exec (C.CondElse pos expr st1 st2) = do
         exec st2
 
 exec (C.Break pos) = do
-    env <- ask
+    e <- ask
 
-    return (StmtReturn env BreakF)
+    return e {flag = BreakF}
 
 exec (C.Cont pos) = do
-    env <- ask
+    e <- ask
 
-    return (StmtReturn env ContF)
+    return e {flag = ContF}
 
 exec (C.While pos expr st) = do
-    oldEnv <- ask
     (BoolV bool) <- eval expr
-
+    e <- ask
     if bool then
         do
-            StmtReturn env flag <- exec st
-            case flag of
-                BreakF -> return $ StmtReturn env NoF
-                RetF _ -> return $ StmtReturn env flag
+            newEnv <- exec st
+            case flag newEnv of
+                BreakF -> ask
+                RetF v -> return $ e {flag = RetF v}
                 noneOrCont -> exec (C.While pos expr st)
     else
-        return (StmtReturn oldEnv NoF)
+        ask
+
+
+exec (C.FnDef a _ _ _ _) = undefined
 
 
 exec (C.SExp pos expr) = do
     val <- eval expr
-    oldEnv <- ask
-
-    return (StmtReturn oldEnv NoF)
+    ask
 
 exec (C.Print pos expr) = do
     val <- eval expr
-    oldEnv <- ask
 
     liftIO $ print val
 
-    return (StmtReturn oldEnv NoF)
+    ask
 
 exec (C.ArrElAss pos ident idxs expr) = do
     val <- eval expr
-    oldEnv <- ask
     indexes <- getArrArgs idxs
     let (last, t) = withoutLast indexes 
-    Just arrLoc <- asks (M.lookup ident)
+    Just arrLoc <- asks (M.lookup ident . env)
     ArrPtr arrPtr <- accessArray (ArrPtr arrLoc) t
 
     Just (ArrV arrVal) <- gets (M.lookup arrPtr . store)
@@ -330,7 +301,7 @@ exec (C.ArrElAss pos ident idxs expr) = do
 
     modify (\s -> IState {store = M.insert arrPtr newArr (store s), newloc = newloc s})
 
-    return $ StmtReturn oldEnv NoF
+    ask
 
 
     
@@ -342,7 +313,7 @@ exec (C.ArrElAss pos ident idxs expr) = do
     -- modify incNewLock
     -- modify (\s -> IState {store = M.insert newLocation (FuncV (Fn args block oldEnv)) (store s), newloc =  newloc s})
 
-    -- return (StmtReturn oldEnv NoF)
+    -- return (Res oldEnv NoF)
         
 
 execProgram :: C.Program -> IMonad ()
@@ -352,6 +323,6 @@ execProgram (C.Program pos block) = do
 
 runProgram :: C.Program -> IO ()--(Either Error String)
 runProgram prog = do
-    res <- runExceptT (runReaderT (runStateT (execProgram prog) (IState {store = M.empty, newloc = 0})) M.empty )
+    res <- runExceptT (runReaderT (runStateT (execProgram prog) (IState {store = M.empty, newloc = 0})) Env {env = M.empty, flag=NoF} )
     print res
     return ()

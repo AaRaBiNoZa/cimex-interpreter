@@ -26,7 +26,7 @@ import Cimex.Lex    ( Token, mkPosToken )
 import Cimex.Par    ( pProgram, myLexer )
 import Cimex.Print  ( Print, printTree )
 import Cimex.Skel   ()
-import TypeChecker (runTypeCheck)
+import TypeChecker (runTypeCheck, showErr)
 import Interpreter (runProgram)
 
 type Err        = Either String
@@ -52,7 +52,7 @@ run v p s =
       putStrLn "\nParse Successful!"
       let typeCheckRes = runTypeCheck tree
       case typeCheckRes of
-        Left staticError -> hPutStrLn stderr $ "Failure: " ++ staticError
+        Left staticError -> hPutStrLn stderr $ "Failure: " ++ showErr staticError
         Right _ -> runProgram tree
       showTree v tree
   where
