@@ -94,11 +94,27 @@ accessArray :: Value -> [Int] -> C.BNFC'Position -> IMonad Value
 accessArray ptrOrVal [] pos = return ptrOrVal
 accessArray (ArrPtr loc) (s:rest) pos = do
     Just (ArrV arr) <- gets (M.lookup loc . store)
+    if s >= size arr
+        then throwError $ Error "Runtime error - access past end of array" pos
+        else do
+            let Just next = M.lookup s $ contents arr
 
-    let Just next = M.lookup s $ contents arr
-
-    accessArray next rest pos
+            accessArray next rest pos
 accessArray _ _ pos = throwError $ Error "Catastrophic error - invalid arrray access" pos
+
+setArray :: Value -> [Int] -> Value -> C.BNFC'Position -> IMonad ()
+setArray _ [] _ pos = throwError $ Error "Catastrophic error - invalid array assign" pos
+setArray (ArrPtr loc) [idx] val pos = do
+    Just (ArrV arr) <- gets (M.lookup loc . store)
+    let newArr = arr {contents = M.insert idx val (contents arr)}
+    modify (\s -> s {store = M.insert loc (ArrV newArr) (store s)} )
+setArray (ArrPtr loc) (i:idxs) val pos = do
+    Just (ArrV arr) <- gets (M.lookup loc . store)
+    let Just next = M.lookup i $ contents arr
+    setArray next idxs val pos
+setArray _ _ _ pos = throwError $ Error "Catastrophic error - invalid array assign" pos
+
+
 
 withoutLast :: [Int] -> (Int, [Int])
 withoutLast [] = (0, [])
@@ -175,7 +191,8 @@ eval (C.ECrtArr pos tp args) = do
 eval (C.EArrGet pos ident args) = do
     parsedArgs <- getArrArgs args
     Just loc <- asks (M.lookup ident . env)
-    accessArray (ArrPtr loc) parsedArgs pos
+    Just arrPtr <- gets (M.lookup loc . store)
+    accessArray arrPtr parsedArgs pos
 
 eval (C.EString pos str) = return $ StrV str
 
@@ -211,8 +228,8 @@ exec (C.Decl pos tp (i:its)) = do
             (T.ArrT _, _) -> return $ ArrPtr 0
             (_, _) -> throwError $ Error "Catastrophic error - declaring a function somehow" pos
     let ident = case i of
-            C.Init pos iden expr -> ident
-            C.NoInit pos iden -> ident
+            C.Init pos iden expr -> iden
+            C.NoInit pos iden -> iden
 
     e <- ask
     newLocation <- gets newloc
@@ -293,13 +310,10 @@ exec (C.ArrElAss pos ident idxs expr) = do
     val <- eval expr
     indexes <- getArrArgs idxs
     let (last, t) = withoutLast indexes 
-    Just arrLoc <- asks (M.lookup ident . env)
-    ArrPtr arrPtr <- accessArray (ArrPtr arrLoc) t
+    Just loc <- asks (M.lookup ident . env)
+    Just arrPtr <- gets (M.lookup loc . store)
 
-    Just (ArrV arrVal) <- gets (M.lookup arrPtr . store)
-    let newArr = ArrV $ Array (M.insert last val $ contents arrVal) (size arrVal)
-
-    modify (\s -> IState {store = M.insert arrPtr newArr (store s), newloc = newloc s})
+    setArray arrPtr indexes val pos
 
     ask
 
