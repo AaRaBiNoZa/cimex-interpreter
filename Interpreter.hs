@@ -51,6 +51,12 @@ data Value = StrV String
 
 type IMonad a = StateT IState (ReaderT IEnv (ExceptT Error IO)) a
 
+newLoc :: IMonad Loc
+newLoc = do
+    newLocation <- gets newloc
+    modify (\old -> old {newloc = newloc old + 1})
+    return newLocation
+
 
 incNewLock :: IState -> IState
 incNewLock old = IState {store = store old, newloc = newloc old + 1}
@@ -66,13 +72,13 @@ getArrArgs = mapM evalArg where
         v1 <- eval e
         let IntV value = v1
         if value < 0 then
-            throwError $ Error {desc = "Cannot create array with one dimension less or equal to 0", location = pos}
+            throwError $ Error {desc = "Runtime Error: Cannot create array with one dimension less or equal to 0", location = pos}
         else
             return value
 
 
 allocArray :: C.BNFC'Position -> T.Type -> [Int] -> IMonad Value
-allocArray pos tp [] = throwError $ Error "Catastrophic error - cannot create null dimensional array" pos
+allocArray pos tp [] = throwError $ Error "Impossible - cannot create null dimensional array" pos
 allocArray pos (T.ArrT tp) (s:rest) = do
     val <- case tp of
         T.IntT -> return (ArrV $ createArray (IntV 0) s)
@@ -81,7 +87,7 @@ allocArray pos (T.ArrT tp) (s:rest) = do
         T.ArrT subTp -> do
             subArrayPtrs <- replicateM s (allocArray pos (T.ArrT subTp) rest)
             return (ArrV $ Array {contents = M.fromList (zip [0..s - 1] subArrayPtrs), size=s})
-        _ -> throwError $ Error "Catastrophic error - cannot create array of functions" pos
+        _ -> throwError $ Error "Impossible - cannot create array of functions" pos
 
     newLocation <- gets newloc
     modify incNewLock
@@ -89,10 +95,11 @@ allocArray pos (T.ArrT tp) (s:rest) = do
 
     return (ArrPtr newLocation)
 
-allocArray pos _ _ = throwError $ Error "Catastrophic error - wrong type for alloc array" pos
+allocArray pos _ _ = throwError $ Error "Impossible - wrong type for alloc array" pos
 
 accessArray :: Value -> [Int] -> C.BNFC'Position -> IMonad Value
 accessArray ptrOrVal [] pos = return ptrOrVal
+accessArray (ArrPtr (-1)) _ pos = throwError $ Error "Runtime error - trying to access uninitialized array" pos
 accessArray (ArrPtr loc) (s:rest) pos = do
     Just (ArrV arr) <- gets (M.lookup loc . store)
     if s >= size arr
@@ -101,10 +108,10 @@ accessArray (ArrPtr loc) (s:rest) pos = do
             let Just next = M.lookup s $ contents arr
 
             accessArray next rest pos
-accessArray _ _ pos = throwError $ Error "Catastrophic error - invalid arrray access" pos
+accessArray _ _ pos = throwError $ Error "Impossible - invalid arrray access" pos
 
 setArray :: Value -> [Int] -> Value -> C.BNFC'Position -> IMonad ()
-setArray _ [] _ pos = throwError $ Error "Catastrophic error - invalid array assign" pos
+setArray _ [] _ pos = throwError $ Error "Impossible - invalid array assign" pos
 setArray (ArrPtr loc) [idx] val pos = do
     Just (ArrV arr) <- gets (M.lookup loc . store)
     let newArr = arr {contents = M.insert idx val (contents arr)}
@@ -113,7 +120,7 @@ setArray (ArrPtr loc) (i:idxs) val pos = do
     Just (ArrV arr) <- gets (M.lookup loc . store)
     let Just next = M.lookup i $ contents arr
     setArray next idxs val pos
-setArray _ _ _ pos = throwError $ Error "Catastrophic error - invalid array assign" pos
+setArray _ _ _ pos = throwError $ Error "Impossible - invalid array assign" pos
 
 eval :: C.Expr -> IMonad Value
 eval (C.EVar pos ident) = do
@@ -202,12 +209,11 @@ eval (C.EApp pos ident fnArgs) = do
     case result of
         RetF val -> return val
         NoF -> return $ defaultValue fc
-        _ -> throwError $ Error "Catastrophic error - break/continue got out of a function" pos
+        _ -> throwError $ Error "Impossible - break/continue got out of a function" pos
     where
         prepareEnvForFExecution :: C.BNFC'Position -> [FnArg] -> [C.Expr] -> IEnv -> IMonad IEnv
         prepareEnvForFExecution pos [] [] oldEnv = return oldEnv
         prepareEnvForFExecution pos (param:prest) (arg:argrest) oldEnv = do
-            e <- ask
             newEnv <- case (param, arg) of
                     (ArgVal ident, _) -> do
                         val <- eval arg
@@ -216,15 +222,15 @@ eval (C.EApp pos ident fnArgs) = do
                         modify incNewLock
                         modify (\s -> s {store = M.insert newLocation val (store s)})
 
-                        return $ e {env = M.insert ident newLocation (env e)}
+                        return $ oldEnv {env = M.insert ident newLocation (env oldEnv)}
                     (ArgRef ident, C.EVar pos refIdent) -> do
                         Just ref <- asks (M.lookup refIdent . env)
 
-                        return $ e {env = M.insert ident ref (env e)}
-                    (_, _) -> throwError $ Error "Catastrophic error - invalid function execution" pos
+                        return $ oldEnv {env = M.insert ident ref (env oldEnv)}
+                    (_, _) -> throwError $ Error "Impossible - invalid function execution" pos
 
             prepareEnvForFExecution pos prest argrest newEnv
-        prepareEnvForFExecution pos _ _ _ = throwError $ Error "Catastrophic error - arguments/parameters don't match" pos
+        prepareEnvForFExecution pos _ _ _ = throwError $ Error "Impossible - arguments/parameters don't match" pos
     
 
 
@@ -258,7 +264,7 @@ exec (C.Decl pos tp (i:its)) = do
             (T.IntT, _) -> return $ IntV 0
             (T.BoolT, _) -> return $ BoolV False
             (T.ArrT _, _) -> return $ ArrPtr 0
-            (_, _) -> throwError $ Error "Catastrophic error - declaring a function somehow" pos
+            (_, _) -> throwError $ Error "Impossible - declaring a function somehow" pos
     let ident = case i of
             C.Init pos iden expr -> iden
             C.NoInit pos iden -> iden
@@ -269,7 +275,7 @@ exec (C.Decl pos tp (i:its)) = do
     let newEnv = M.insert ident newLocation (env e)
     modify (\s ->IState {store = M.insert newLocation val $ store s, newloc = newloc s})
 
-    return e {env = newEnv}
+    local (const (e {env = newEnv})) $ exec (C.Decl pos tp its)
 
 exec (C.VarAss pos ident expr) = do
     val <- eval expr
@@ -339,11 +345,15 @@ exec (C.ArrElAss pos ident idxs expr) = do
     indices <- getArrArgs idxs
 
     Just loc <- asks (M.lookup ident . env)
-    Just arrPtr <- gets (M.lookup loc . store)
 
-    setArray arrPtr indices val pos
+    if loc == - 1 then
+        throwError $ Error "Runtime error - assignment to uninitialized array" pos
+    else do
+        Just arrPtr <- gets (M.lookup loc . store)
 
-    ask
+        setArray arrPtr indices val pos
+
+        ask
 
 
     
@@ -354,8 +364,8 @@ exec (C.FnDef pos tp ident params block) = do
             T.BoolT -> return $ BoolV False
             T.StrT -> return $ StrV ""
             T.IntT -> return $ IntV 0
-            T.ArrT _ -> return $ ArrPtr 0
-            _ -> throwError $ Error "Catastrophic error - invalid fn type somehow" pos
+            T.ArrT _ -> return $ ArrPtr $ -1
+            _ -> throwError $ Error "Impossible - invalid fn type somehow" pos
 
     let fc = Fn {params = parsedParams, body = block, frozenEnv = e, defaultValue = defVal}
 

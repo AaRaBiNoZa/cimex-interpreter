@@ -1,10 +1,42 @@
-# Cimex
+# Cimex (latin - bug)
 Jest to język imperatywny o składni podobnej do Latte/c, z największą różnicą polegającą na obsłudze wcięć jako bloków 
-kodu i braku obowiązku używania średników (python like).
+kodu i braku obowiązku używania średników (python like). Reszta jest jak w c, przy czym
+można przekazywać parametry przez referencję (a nie wskaźnik) dodając przy deklaracji funkcji, przed nazwą parametru symbol &.
 
-Dodatkowo zawiera wielowymiarowe tablice przekazywane przez zmienną.
 
-Program to lista instrukcji, które wykonywane są po kolei.
+
+Oprócz interpretera dostępny jest statyczny typechecker, który sprawdza typy, 
+dublowane deklaracje zmiennych w tym samym bloku, break/continue poza pętlą, return poza
+ciałem funkcji itd.
+
+Dodatkowo język zawiera wielowymiarowe tablice przekazywane przez zmienną.
+(Tak dokładniej to wartość samej tablicy to wskaźnik, gdy użyje się na tablicy
+"print" zostanie wypisana lokacja w pamięci, ale to jedyny moment, w którym
+użytkownik ma dostęp do tego wskaźnika. Dzięki temu przypisanie to 
+po prostu przypisanie przez wartość, które tylko zachowuje się jak przypisanie przez
+referencję.)
+Tablic nie można przekazywać w funkcjach na dwa sposoby, nielegalny
+jest parametr "int[][] &x" i taki przypadek jest wyłapywany statycznie. Tablice domyślnie przekazywane są
+przez referencję (znów - tak naprawdę jest to przekazanie przez wartość wskaźnika, ale to kwestie "pod maską".
+Zachowanie odpowiada przekazaniu przez referencję.)
+
+Dla wielowymiarowej tablicy np. int [][] x = new int[][] [4][4], wartością x jest wskaźnik do tablicy wskaźników na tablice typu int, x[0] to wskaźnik na tablicę typu int, x[0][0] to wartość typu int.
+
+Program to lista instrukcji, które wykonywane są po kolei. Funkcje są definiowane jak w c, przy czym
+w cimex nie ma dostępnego typu void. Każda funkcja zwraca jakąś wartość. W przypadku pominięcia "return" w ciele funkcji, zwracana jest
+domyślna wartość dla danego typu (int 0, bool false, string "", array (array pointer) -1).
+
+Funkcje zezwalają na rekurencję, ale kolejność deklaracji funkcji ma znaczenie.
+
+Instrukcje: pusta, blok instrukcji (lista instrukcji), if, if else, przypisanie, return, while, break, continue, deklaracja funkcji, deklaracja/definicja zmiennej, wyrażenie - podobnie do c.
+
+Zmienne muszą być zadeklarowane przed użyciem, opcjonalnie mogą być zainicjalizowane - jeśli to się nie stanie zostaną zainicjalizowane z wartością domyślną (opisane wyżej przy pominięciu return).
+Obowiązują typowe zasady widoczności - zmienne zadeklarowane w bloku nie są widoczne poza nim i przesłaniają zmienne o tej samej nazwie spoza bloku. W obrębie bloku zmienne muszą mieć unikalne nazwy (dokładnie to samo tyczy się funkcji).
+
+Ogólnie można patrzec na ten język jak na Latte z tablicami, obsługą wcięć i brakiem typu void.
+
+# Negocjacje
+Jeśli coś jest zbyt ubogie i nie zasługuje na opisaną ilość punktów - np. brak wzajemnej rekurencji, jestem gotów dodać do języka pętlę foreach.
 
 # Nietypowe konstrukcje
 Deklaracje i tworzenie tablic:
@@ -36,9 +68,9 @@ print (func (1, 2))
  można pominąć nawiasy klamrowe)
 
 # Gramatyka
-Gramatyka w LBNF znajduje się w pliku Cimex.cf, jest to lekko zmodyfikowana gramatyka języka Latte.
+Gramatyka w LBNF znajduje się w pliku Cimex.cf, jest to zmodyfikowana gramatyka języka Latte.
 
-Główne zmiany to layout i tablice.
+Główne zmiany to layout i tablice (i pętla if, przez użycie layoutu).
 
 # Tabelka i przykładowe programy:
 
@@ -49,7 +81,7 @@ Główne zmiany to layout i tablice.
   03 (zmienne, przypisanie) +
   04 (print) +
   05 (while, if) +
-  06 (funkcje lub procedury, rekurencja) + FUNKCJE (bez procedur)
+  06 (funkcje lub procedury, rekurencja) + FUNKCJE rekurencyjne (bez procedur)
   07 (przez zmienną / przez wartość / in/out) + ZMIENNA/WARTOŚĆ
   08 (zmienne read-only i pętla for) -
   Na 20 punktów
@@ -79,16 +111,17 @@ string s = "Ala ma kota"
 while (y > x):
     x = x + 1
     y = y - 1
-    if (b) b = !b
+    if (b) b = !b; endif
     if (!b):
         break
+    endif
 
 print(x)
 print(s)
 print(b)
 ```
 
-2. (07, 09, 11, 13)
+2. (06, 07, 09, 11, 13)
 ```
 int x = 20, y = 15, z = 3
 
@@ -122,20 +155,69 @@ print(x)
 
 3. (14)
 ```
-bool[] t = bool[] [2] // false filled array of length 2
+bool[] t = new bool [] [2] // false filled array of length 2
 int[][] ints = new int [][] [2][4] // 0 filled array with dimensions 2x4
+int[][] ints2
 
 t[1] = true
 
 int add_one(int [][] arr, int x, int y):
-    int f = 0, s = 0
+    int f = 0
+    int s = 0
     while (f < x):
         s = 0
         while (s < y):
-            arr[x][y] = arr[x][y] + 1
+            arr[f][s] = arr[f][s] + 1
             s = s + 1
         f = f + 1
 
 add_one(ints, 2, 4)
+
 // now ints will be full of ones
+ints2 = ints
+ints2[1][1] = 100
+
+// will print 100
+print(ints[1][1])
 ```
+
+4. Rekurencja
+```
+int factorial(int n):
+    if (n <= 1):
+        return n
+    endif
+    return (n * factorial(n - 1))
+
+print(factorial(5))
+```
+
+5. Błędy wykonania
+    - statyczne: 
+    ```
+    int factorial(int n):
+    if (n <= 1):
+        return n
+    endif
+    return (n * factorial(n - 1))
+
+    bool x
+
+    factorial(x)
+    ```
+    Program zostanie zatrzymany przez statyczny typecheck z komunikatem np. "Failure: Argument type does not match parameter type at: 9:1"
+    ```
+    int x
+    int y = 5
+
+    int x = 5
+    ```
+    Przykładowy błąd - 
+    "Failure: Cannot redeclare a variable in the same block 4:5"
+    - dynamiczne: 
+    ```
+    int[] a = new int[] [5]
+
+    a[5]
+    ```
+    Przykładowy błąd - "Runtime error - access past end of array at (3,1)"
