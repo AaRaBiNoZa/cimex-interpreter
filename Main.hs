@@ -17,6 +17,7 @@ import Prelude
   , return
   )
 import System.Environment ( getArgs )
+import System.IO          ( hPutStrLn, stderr )
 import System.Exit        ( exitFailure )
 import Control.Monad      ( when )
 
@@ -38,24 +39,22 @@ putStrV :: Verbosity -> String -> IO ()
 putStrV v s = when (v > 1) $ putStrLn s
 
 runFile :: Verbosity -> ParseFun Program -> FilePath -> IO ()
-runFile v p f = putStrLn f >> readFile f >>= run v p
+runFile v p f = readFile f >>= run v p
 
 run :: Verbosity -> ParseFun Program -> String -> IO ()
 run v p s =
   case p ts of
     Left err -> do
-      putStrLn "\nParse              Failed...\n"
-      putStrV v "Tokens:"
-      mapM_ (putStrV v . showPosToken . mkPosToken) ts
-      putStrLn err
+      hPutStrLn stderr  "\nParse              Failed...\n"
+      hPutStrLn stderr err
       exitFailure
     Right tree -> do
       case T.runTypeCheck tree of
-        Left err -> putStrLn $ "Static analysis error: " ++ T.showErr err
+        Left err -> hPutStrLn stderr ("Static analysis error: " ++ T.showErr err) >> exitFailure
         Right _ -> do
           runRes <- I.runProgram tree
           case runRes of
-            Left err -> putStrLn $ "Runtime error: " ++ I.showErr err
+            Left err -> hPutStrLn stderr ("Runtime error: " ++ I.showErr err) >> exitFailure
             Right _ -> return ()
       showTree v tree
   where
