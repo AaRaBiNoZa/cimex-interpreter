@@ -1,0 +1,28 @@
+int x = 100 // global
+
+int f():
+    x = x + 1 // changing global
+    print(x)
+
+int g():
+    int x = 200 // declaring local
+    f()
+    print(x)
+
+int h(int x):
+    x = 300     // setting local (arg)
+    g()
+    print(x)
+
+print(x)
+print(h(0))
+print(x)
+
+:
+    // this is an anonymous block, i can declare local x
+    int x = 20
+    print("Local x")
+    print(x)
+
+print("Global x")
+print(x)

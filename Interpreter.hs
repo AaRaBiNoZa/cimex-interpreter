@@ -46,7 +46,15 @@ data Value = StrV String
             | ArrPtr Loc
             | ArrV (Array Value)
             | FuncV Function
-    deriving (Show, Eq, Ord)
+    deriving (Eq, Ord)
+
+instance Show Value where
+    show (StrV s) = show s
+    show (IntV i) = show i
+    show (BoolV b) = show b
+    show (ArrPtr l) = "Ptr" ++ show l
+    show (FuncV fn) = "Function"
+    show (ArrV arr) = "Array"
 
 
 type IMonad a = StateT IState (ReaderT IEnv (ExceptT Error IO)) a
@@ -57,13 +65,8 @@ newLoc = do
     modify (\old -> old {newloc = newloc old + 1})
     return newLocation
 
-
-incNewLock :: IState -> IState
-incNewLock old = IState {store = store old, newloc = newloc old + 1}
-
 createArray :: a -> Int -> Array a
 createArray defaultValue size = (Array {contents = M.fromList [(idx, defaultValue) | idx <- [0..(size - 1)]], size = size})
-
 
 getArrArgs :: [C.ArrArg] -> IMonad [Int]
 getArrArgs = mapM evalArg where
@@ -89,8 +92,7 @@ allocArray pos (T.ArrT tp) (s:rest) = do
             return (ArrV $ Array {contents = M.fromList (zip [0..s - 1] subArrayPtrs), size=s})
         _ -> throwError $ Error "Impossible - cannot create array of functions" pos
 
-    newLocation <- gets newloc
-    modify incNewLock
+    newLocation <- newLoc
     modify (\s -> IState {store = M.insert newLocation val $ store s, newloc = newloc s})
 
     return (ArrPtr newLocation)
@@ -99,7 +101,6 @@ allocArray pos _ _ = throwError $ Error "Impossible - wrong type for alloc array
 
 accessArray :: Value -> [Int] -> C.BNFC'Position -> IMonad Value
 accessArray ptrOrVal [] pos = return ptrOrVal
-accessArray (ArrPtr (-1)) _ pos = throwError $ Error "Runtime error - trying to access uninitialized array" pos
 accessArray (ArrPtr loc) (s:rest) pos = do
     Just (ArrV arr) <- gets (M.lookup loc . store)
     if s >= size arr
@@ -114,8 +115,11 @@ setArray :: Value -> [Int] -> Value -> C.BNFC'Position -> IMonad ()
 setArray _ [] _ pos = throwError $ Error "Impossible - invalid array assign" pos
 setArray (ArrPtr loc) [idx] val pos = do
     Just (ArrV arr) <- gets (M.lookup loc . store)
-    let newArr = arr {contents = M.insert idx val (contents arr)}
-    modify (\s -> s {store = M.insert loc (ArrV newArr) (store s)} )
+    if idx >= size arr then
+        throwError $ Error "Runtime error - assignment past end of array" pos
+    else do
+        let newArr = arr {contents = M.insert idx val (contents arr)}
+        modify (\s -> s {store = M.insert loc (ArrV newArr) (store s)} )
 setArray (ArrPtr loc) (i:idxs) val pos = do
     Just (ArrV arr) <- gets (M.lookup loc . store)
     let Just next = M.lookup i $ contents arr
@@ -141,10 +145,11 @@ eval (C.EMul pos e1 op e2) = do
     IntV v1 <- eval e1
     IntV v2 <- eval e2
 
-    case op of
-        C.Times _ -> return $ IntV (v1 * v2)
-        C.Div _ -> return $ IntV (v1 `div` v2)
-        C.Mod _ -> return $ IntV (v1 `mod` v2)
+    case (op, v2) of
+        (C.Times _, _) -> return $ IntV (v1 * v2)
+        (_, 0) -> throwError $ Error "Runtime Error: Division by 0" pos
+        (C.Div _, _) -> return $ IntV (v1 `div` v2)
+        (C.Mod _, _) -> return $ IntV (v1 `mod` v2)
 
 eval (C.EAdd pos e1 op e2) = do
     IntV v1 <- eval e1
@@ -191,7 +196,10 @@ eval (C.EArrGet pos ident args) = do
     parsedArgs <- getArrArgs args
     Just loc <- asks (M.lookup ident . env)
     Just arrPtr <- gets (M.lookup loc . store)
-    accessArray arrPtr parsedArgs pos
+    case arrPtr of
+        (ArrPtr (-1)) -> throwError $ Error "Runtime error - trying to access uninitialized array" pos
+        _validArr -> accessArray arrPtr parsedArgs pos
+    
 
 eval (C.EString pos str) = return $ StrV str
 
@@ -218,8 +226,7 @@ eval (C.EApp pos ident fnArgs) = do
                     (ArgVal ident, _) -> do
                         val <- eval arg
 
-                        newLocation <- gets newloc
-                        modify incNewLock
+                        newLocation <- newLoc
                         modify (\s -> s {store = M.insert newLocation val (store s)})
 
                         return $ oldEnv {env = M.insert ident newLocation (env oldEnv)}
@@ -231,7 +238,7 @@ eval (C.EApp pos ident fnArgs) = do
 
             prepareEnvForFExecution pos prest argrest newEnv
         prepareEnvForFExecution pos _ _ _ = throwError $ Error "Impossible - arguments/parameters don't match" pos
-    
+
 
 
 
@@ -263,15 +270,14 @@ exec (C.Decl pos tp (i:its)) = do
             (T.StrT, _) -> return $ StrV ""
             (T.IntT, _) -> return $ IntV 0
             (T.BoolT, _) -> return $ BoolV False
-            (T.ArrT _, _) -> return $ ArrPtr 0
+            (T.ArrT _, _) -> return $ ArrPtr (-1)
             (_, _) -> throwError $ Error "Impossible - declaring a function somehow" pos
     let ident = case i of
             C.Init pos iden expr -> iden
             C.NoInit pos iden -> iden
 
     e <- ask
-    newLocation <- gets newloc
-    modify incNewLock
+    newLocation <- newLoc
     let newEnv = M.insert ident newLocation (env e)
     modify (\s ->IState {store = M.insert newLocation val $ store s, newloc = newloc s})
 
@@ -346,21 +352,21 @@ exec (C.ArrElAss pos ident idxs expr) = do
 
     Just loc <- asks (M.lookup ident . env)
 
-    if loc == - 1 then
-        throwError $ Error "Runtime error - assignment to uninitialized array" pos
-    else do
-        Just arrPtr <- gets (M.lookup loc . store)
 
-        setArray arrPtr indices val pos
+    Just arrPtr <- gets (M.lookup loc . store)
 
-        ask
+    case arrPtr of
+        (ArrPtr (-1)) -> throwError $ Error "Runtime error - assignment to uninitialized array" pos
+        _validPtr -> do
+            setArray arrPtr indices val pos
+
+            ask
 
 
-    
 exec (C.FnDef pos tp ident params block) = do
     e <- ask
     let parsedParams = parseParams params
-    defVal <- case parseType tp of 
+    defVal <- case parseType tp of
             T.BoolT -> return $ BoolV False
             T.StrT -> return $ StrV ""
             T.IntT -> return $ IntV 0
@@ -369,8 +375,7 @@ exec (C.FnDef pos tp ident params block) = do
 
     let fc = Fn {params = parsedParams, body = block, frozenEnv = e, defaultValue = defVal}
 
-    newLocation <- gets newloc
-    modify incNewLock
+    newLocation <- newLoc
     modify (\s -> s {store = M.insert newLocation (FuncV fc) (store s)})
     return (e {env = M.insert ident newLocation (env e)}) where
         parseParams :: [C.Arg] -> [FnArg]
@@ -379,15 +384,17 @@ exec (C.FnDef pos tp ident params block) = do
             go (C.ArgRef pos tp ident) = ArgRef ident
 
 
-        
+
 
 execProgram :: C.Program -> IMonad ()
-execProgram (C.Program pos block) = do 
+execProgram (C.Program pos block) = do
     execBlock (C.Block pos block)
     return ()
 
-runProgram :: C.Program -> IO ()--(Either Error String)
+runProgram :: C.Program -> IO (Either Error ())
 runProgram prog = do
     res <- runExceptT (runReaderT (runStateT (execProgram prog) (IState {store = M.empty, newloc = 0})) Env {env = M.empty, flag=NoF} )
-    print res
-    return ()
+    case res of
+        Right _ -> return $ Right ()
+        Left err -> return $ Left err
+

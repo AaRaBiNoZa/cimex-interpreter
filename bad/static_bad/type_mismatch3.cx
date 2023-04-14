@@ -1,0 +1,5 @@
+bool b = true
+
+int [] a = new int [] [5]
+
+a[b] = 3

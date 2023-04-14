@@ -1,0 +1,15 @@
+int factorial(int n, int &result):
+    if (n <= 1):
+        result = 1
+    else:
+        factorial(n - 1, result)
+        result = result * n
+    endif
+
+int res
+int n = 5
+
+factorial(n, res)
+
+print(res)
+print(n)

@@ -57,27 +57,28 @@ parseType (C.Bool pos) = BoolT
 parseType (C.Arr pos t) = ArrT (parseType t)
 
 
-checkTypeIsIn :: Type -> Set Type -> C.BNFC'Position ->  TCMonad ()
-checkTypeIsIn t good pos = do
+checkTypeIsIn :: Type -> Set Type -> C.BNFC'Position -> String -> TCMonad ()
+checkTypeIsIn t good pos msg = do
     if S.member t good then
         return ()
     else
-        throwError $ Error ("Type mismatch: \n Expected types: " ++ showTypeOptions good ++ "\n Got: " ++ show t) pos
+        throwError $ Error ("Type mismatch in " ++ msg ++ ": \nExpected types: " ++ showTypeOptions good ++ "\nGot: " ++ show t) pos
 
-checkTypeIs :: Type -> Type -> C.BNFC'Position ->  TCMonad ()
+checkTypeIs :: Type -> Type -> C.BNFC'Position ->  String -> TCMonad ()
 checkTypeIs t1 t2 = checkTypeIsIn t1 (S.singleton t2)
 
--- gets size  of dims and checks if it's a valid array type
+-- gets size  of dims
+-- it is called only for array types
 getArrayDimSize :: Type -> C.BNFC'Position -> TCMonad Int
 getArrayDimSize arr@(ArrT t) pos = go arr pos where
     go :: Type -> C.BNFC'Position -> TCMonad Int
     go tp position = case tp of
-        FunT _ _ -> throwError $ Error "Invalid array type: functions cannot be elements of an array" pos
+        FunT _ _ -> throwError $ Error "Impossible! Invalid array type: functions cannot be elements of an array" pos
         ArrT tp2 -> do
             rest  <- go tp2 position
             return $ rest + 1
         _basicType -> return 0
-getArrayDimSize _notArray pos = throwError $ Error "Expected array" pos
+getArrayDimSize _notArray pos = throwError $ Error "Impossible! Expected array" pos
 
 isArray :: Type -> Bool
 isArray (ArrT _) = True
@@ -94,12 +95,12 @@ getArrayBaseT (ArrT t) = getArrayBaseT t
 getArrayBaseT t = t
 
 -- checks if indices are IntT and gets number of dimensions
-getArrayIndicesSize :: [C.ArrArg] -> TCMonad Int
-getArrayIndicesSize [] = return 0
-getArrayIndicesSize ((C.ArrIdx pos e):xs) = do
+getArrayIndicesSize :: [C.ArrArg] -> String -> TCMonad Int
+getArrayIndicesSize [] msg = return 0
+getArrayIndicesSize ((C.ArrIdx pos e):xs) msg = do
     tp <- typeOf e
-    checkTypeIs tp IntT pos
-    rest <- getArrayIndicesSize xs
+    checkTypeIs tp IntT pos msg
+    rest <- getArrayIndicesSize xs msg
     return $ rest + 1
 
 -- TYPECHECKER
@@ -117,22 +118,24 @@ typeOf (C.EVar pos v) = do
 
 typeOf (C.Neg pos e) = do
     et <- typeOf e
-    checkTypeIs et IntT pos
+    checkTypeIs et IntT pos "Negation"
     return et
 
 typeOf (C.Not pos e) = do
     et <- typeOf e
-    checkTypeIs et BoolT pos
+    checkTypeIs et BoolT pos "Not"
     return et
 
-typeOf (C.ECrtArr pos t dims) = do
+typeOf (C.ECrtArr pos t@(C.Arr _ _) dims) = do
     let tp = parseType t
     typeDims <- getArrayDimSize tp pos
-    indicesDims <- getArrayIndicesSize dims
+    indicesDims <- getArrayIndicesSize dims "Create array"
     if typeDims == indicesDims then
         return tp
     else
         throwError $ Error "Invalid dimensions when creating an array" pos
+
+typeOf (C.ECrtArr pos _ _) = throwError $ Error "Expected an array in create array" pos
 
 typeOf (C.EApp pos ident args) = do
     fType <- asks (M.lookup ident . types)
@@ -165,10 +168,10 @@ typeOf (C.EApp pos ident args) = do
 typeOf (C.EArrGet pos ident idxs) = do
     tp <- asks (M.lookup ident . types)
     case tp of
-        Nothing -> throwError $ Error "Undeclared variable" pos
+        Nothing -> throwError $ Error "Undeclared array" pos
         Just arr@(ArrT _) -> do
             typeDims <- getArrayDimSize arr pos
-            indicesDims <- getArrayIndicesSize idxs
+            indicesDims <- getArrayIndicesSize idxs "Array access"
             if typeDims >= indicesDims then
                 return $ getNDimArrayT (getArrayBaseT arr) (typeDims - indicesDims)
             else
@@ -177,9 +180,9 @@ typeOf (C.EArrGet pos ident idxs) = do
 
 typeOf (C.EAdd pos e1 op e2) = do
     t1 <- typeOf e1
-    checkTypeIs t1 IntT pos
+    checkTypeIs t1 IntT pos "Add operation"
     t2 <- typeOf e2
-    checkTypeIs t2 IntT pos
+    checkTypeIs t2 IntT pos "Add operation"
     return IntT
 
 typeOf (C.EMul pos e1 op e2) = typeOf (C.EAdd pos e1 (C.Plus Nothing) e2)
@@ -196,16 +199,16 @@ typeOf (C.ERel pos eq (C.NE relpos) e2) = typeOf (C.ERel pos eq (C.EQU relpos) e
 
 typeOf (C.ERel pos e1 op e2) = do
     t1 <- typeOf e1
-    checkTypeIs t1 IntT pos
+    checkTypeIs t1 IntT pos "Comparison"
     t2 <- typeOf e2
-    checkTypeIs t2 IntT pos
+    checkTypeIs t2 IntT pos "Comparison"
     return BoolT
 
 typeOf (C.EAnd pos e1 e2) = do
     t1 <- typeOf e1
-    checkTypeIs t1 BoolT pos
+    checkTypeIs t1 BoolT pos "Logical operation"
     t2 <- typeOf e2
-    checkTypeIs t2 BoolT pos
+    checkTypeIs t2 BoolT pos "Logical operation"
     return BoolT
 
 typeOf (C.EOr pos e1 e2) = typeOf (C.EAnd pos e1 e2)
@@ -228,17 +231,17 @@ checkStatement (C.FnDef pos retType ident params block) = do
         let updatedEnvWithFunction = M.insert ident fnType (types env) -- env that includes this function's type
         fnBodyBlockVarsAndTypes <- createBlockVarsAndTypesFromParams params
         -- union is left biased
-        local (const TCEnv {types = M.union (snd fnBodyBlockVarsAndTypes) updatedEnvWithFunction , blockVars = fst fnBodyBlockVarsAndTypes, insideLoop = insideLoop env, insideFunc = Just fnType}) (checkBlock block)
+        local (const TCEnv {types = M.union (snd fnBodyBlockVarsAndTypes) updatedEnvWithFunction , blockVars = S.insert ident (fst fnBodyBlockVarsAndTypes), insideLoop = insideLoop env, insideFunc = Just fnType}) (checkBlock block)
         return $ env {types = updatedEnvWithFunction}
 
     where
         paramSignature :: C.Arg -> TCMonad (Type, Bool)
         paramSignature (C.ArgVal pos tp ident) = case parseType tp of
-            FunT _ _ -> throwError $ Error "Functions cannot be function parameters" pos
+            FunT _ _ -> throwError $ Error "Impossible! Functions cannot be function parameters" pos
             goodType -> return (goodType, False)
         paramSignature (C.ArgRef pos tp ident) = do
             case parseType tp of
-                FunT _ _ -> throwError $ Error "Functions cannot be function parameters" pos
+                FunT _ _ -> throwError $ Error "Impossible! Functions cannot be function parameters" pos
                 ArrT _ -> throwError $ Error "Arrays are passed by reference by default - cannot get reference to reference" pos
                 goodTp -> return (goodTp, True)
 
@@ -276,7 +279,7 @@ checkStatement (C.Decl pos tp (item:rest)) = do
                                     throwError $ Error "Cannot redeclare a variable in the same block" posDec
                                 else do
                                     eType <- typeOf e
-                                    checkTypeIs eType parsedTp posDec
+                                    checkTypeIs eType parsedTp posDec "Declaration"
                                     local (const env {types = M.insert ident parsedTp $ types env, blockVars = S.insert ident $ blockVars env}) $ checkStatement (C.Decl pos tp rest)
 checkStatement (C.VarAss pos ident expr) = do
     eType <- typeOf expr
@@ -292,9 +295,9 @@ checkStatement (C.ArrElAss pos ident indices expr) = do
         Nothing -> throwError $ Error "Assignment to undeclared variable" pos
         Just tp@(ArrT _) -> do
             arrDims <- getArrayDimSize tp pos
-            indicesDims <- getArrayIndicesSize indices
+            indicesDims <- getArrayIndicesSize indices "Array assignment"
             if arrDims >= indicesDims then do
-                checkTypeIs exprType (getNDimArrayT (getArrayBaseT tp) (arrDims - indicesDims)) pos
+                checkTypeIs exprType (getNDimArrayT (getArrayBaseT tp) (arrDims - indicesDims)) pos "Array assignment"
                 ask
             else
                 throwError $ Error "Invalid array assignment" pos
@@ -310,13 +313,13 @@ checkStatement (C.Ret pos e) = do
 
 checkStatement (C.Cond pos e stmt) = do 
     eType <- typeOf e
-    checkTypeIs eType BoolT pos
+    checkTypeIs eType BoolT pos "If"
     checkStatement stmt
     ask
 
 checkStatement (C.CondElse pos e st1 st2) = do
     eType <- typeOf e
-    checkTypeIs eType BoolT pos
+    checkTypeIs eType BoolT pos "If Else"
     checkStatement st1
     checkStatement st2
     ask
@@ -324,7 +327,7 @@ checkStatement (C.CondElse pos e st1 st2) = do
 checkStatement (C.While pos e stmt) = do
     env <- ask
     eType <- typeOf e
-    checkTypeIs eType BoolT pos
+    checkTypeIs eType BoolT pos "While"
     local (const env {insideLoop = True}) (checkStatement stmt)
     return env
 

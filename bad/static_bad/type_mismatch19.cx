@@ -1,0 +1,4 @@
+int f(int a, bool b):
+    return 0
+
+f(5)

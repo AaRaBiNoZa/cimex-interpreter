@@ -1,0 +1,5 @@
+bool a = true
+
+if (a):
+    return 0
+endif

@@ -1,0 +1,4 @@
+int f(int a, bool b):
+    return 0
+
+f(true, 4)

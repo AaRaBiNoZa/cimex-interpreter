@@ -1,0 +1,40 @@
+int x = 400
+
+bool global_f():
+    x = x + 1
+    print(x)
+
+int say_hello():
+    print("Hello from the outside!")
+
+bool outer():
+    say_hello()
+
+    int say_hello():
+        print("Hello from the inside!")
+
+    int x = 100 // outer-local
+
+    int f():
+        x = x + 1 // changing outer-local
+        print(x)
+
+    int g():
+        int x = 200 // declaring local
+        f()
+        print(x)
+
+    int h(int x):
+        say_hello() // this is nested say_hello
+        x = 300     // setting local (arg)
+        g()
+        global_f()
+        print(x)
+
+    print(x)    // outer-local
+    h(0)
+    print(x)
+
+print(x) // global x
+outer()
+print(x)

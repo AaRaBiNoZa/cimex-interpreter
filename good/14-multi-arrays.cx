@@ -1,0 +1,24 @@
+bool [] b1 = new bool[] [2] // false filled array of length 2
+bool [] b2
+
+int [][] i1 = new int [][] [2][4] // 0 fille array 2x4
+int [][] i2
+
+int add_to_arr(int [][] arr, int x, int y, int num):
+    int i = 0
+    int j = 0
+
+    while (i < x):
+        j = 0
+        while (j < y):
+            arr[i][j] = arr[i][j] + num
+            j = j + 1
+        i = i + 1
+
+i2 = i1
+add_to_arr(i1, 2, 4, 2)
+
+print(i2[1][1])
+i2[1][1] = 100
+
+print(i1[1][1])
