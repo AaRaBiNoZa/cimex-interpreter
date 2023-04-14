@@ -19,7 +19,7 @@ all : interpreter
 # Rules for building the parser.
 
 Cimex/Abs.hs Cimex/Layout.hs Cimex/Lex.x Cimex/Par.y Cimex/Print.hs Cimex/Test.hs : Cimex.cf
-	bnfc --haskell -d --functor Cimex.cf
+	/home/students/inf/PUBLIC/MRJP/bin/bnfc --haskell -d --functor Cimex.cf || bnfc --haskell -d --functor Cimex.cf
 
 %.hs : %.y
 	${HAPPY} ${HAPPY_OPTS} $<
