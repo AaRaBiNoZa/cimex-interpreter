@@ -20,6 +20,9 @@ type Loc = Int
 data IState = IState {store :: Map Loc Value, newloc :: Loc} deriving Show
 data Error = Error {desc :: String, location :: C.BNFC'Position} deriving Show
 
+showErr :: Error -> String
+showErr (Error desc loc) = desc ++ "\n" ++ T.showPos loc
+
 data IEnv = Env {env :: Map C.Ident Loc, flag :: Flag} deriving (Show, Eq, Ord)
 
 data Flag = RetF Value | BreakF | ContF | NoF deriving (Show, Eq, Ord)
