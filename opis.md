@@ -174,6 +174,7 @@ int add_one(int [][] arr, int x, int y):
 add_one(ints, 2, 4)
 
 // now ints will be full of ones
+print(ints[0][0])
 ints2 = ints
 ints2[1][1] = 100
 

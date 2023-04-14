@@ -1,0 +1,28 @@
+int x = 20, y = 15, z = 3
+
+int f(int &q):
+    q = q + x
+    return q
+
+int g(int p):
+    int x = 10
+    bool h():
+        return (x == 10)
+
+    print(h())
+    x = 11
+    print(h())
+    return p + x
+
+print(z) // will print 3
+f(z)
+print(z) // will printt 23
+
+// next code will show on output the following things (in this order)
+// true
+// false
+// 26
+// 20
+
+print(g(y))
+print(x)

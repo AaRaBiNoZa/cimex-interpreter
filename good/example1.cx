@@ -1,0 +1,15 @@
+int x = 0, y = 4
+bool b = true
+string s = "Ala ma kota"
+
+while (y > x):
+    x = x + 1
+    y = y - 1
+    if (b) b = !b; endif
+    if (!b):
+        break
+    endif
+
+print(x)
+print(s)
+print(b)

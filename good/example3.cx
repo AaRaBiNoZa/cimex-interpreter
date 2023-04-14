@@ -1,0 +1,25 @@
+bool[] t = new bool [] [2] // false filled array of length 2
+int[][] ints = new int [][] [2][4] // 0 filled array with dimensions 2x4
+int[][] ints2
+
+t[1] = true
+
+int add_one(int [][] arr, int x, int y):
+    int f = 0
+    int s = 0
+    while (f < x):
+        s = 0
+        while (s < y):
+            arr[f][s] = arr[f][s] + 1
+            s = s + 1
+        f = f + 1
+
+add_one(ints, 2, 4)
+
+// now ints will be full of ones
+print(ints[0][0])
+ints2 = ints
+ints2[1][1] = 100
+
+// will print 100
+print(ints[1][1])
