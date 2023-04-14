@@ -81,7 +81,7 @@ main = do
   args <- getArgs
   case args of
     ["--help"] -> usage
-    []         -> getContents >>= run 2 pProgram
+    []         -> getContents >>= run 0 pProgram
     "-v":fs    -> mapM_ (runFile 2 pProgram) fs
     fs         -> mapM_ (runFile 0 pProgram) fs
 

@@ -1,4 +1,27 @@
 # Cimex (latin - bug)
+
+## Uruchomienie
+W głównym katalogu rozwiązanie kompiluje się do pliku wykonywalnego `interpreter` za pomocą 
+```
+make
+```
+Interpreter można uruchomić na plikach w trybie cichym (domyślnie) lub z dodatkowymi informacjami (wypisanie drzewa abstrakcyjnego programu, pretty print kodu):
+- zwykłe uruchomienie za pomocą `./interpreter plik`
+- dodatkowe informacje `interpreter -v plik`
+
+W przypadku czytania ze standardowego wejścia, jest dostępna tylko opcja cicha. (uruchamiamy oczywiście przez `./interpreter`)
+
+## Przykładowe programy
+Bad:
+- runtime_bad - błędy w czasie wykonania
+- static_bad - błędy "łapane" przez typechecker, przed wykonaniem
+- syntax_bad - błędy składniowe
+  
+Good:
+- zawiera pliki jak w poleceniu, a poza tym example[1-3].cx to programy oddane przy deklaracji języka i opisane poniżej.
+
+## Opis
+
 Jest to język imperatywny o składni podobnej do Latte/c, z największą różnicą polegającą na obsłudze wcięć jako bloków 
 kodu i braku obowiązku używania średników (python like). Reszta jest jak w c, przy czym
 można przekazywać parametry przez referencję (a nie wskaźnik) dodając przy deklaracji funkcji, przed nazwą parametru symbol &.
