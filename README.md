@@ -12,6 +12,9 @@ Interpreter można uruchomić na plikach w trybie cichym (domyślnie) lub z doda
 W przypadku czytania ze standardowego wejścia, jest dostępna tylko opcja cicha. (uruchamiamy oczywiście przez `./interpreter`)
 
 ## Przykładowe programy
+W kodzie interpretera i typecheckera można zauważyć błędy "Runtime", "Static" oraz "Impossible". Pierwsze dwa są
+raczej oczywiste. Błąd "Impossible" oznacza napotkanie sytuacji, która nie powinna mieć prawa się stać.
+
 Bad:
 - runtime_bad - błędy w czasie wykonania
 - static_bad - błędy "łapane" przez typechecker, przed wykonaniem

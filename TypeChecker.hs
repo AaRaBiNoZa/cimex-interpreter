@@ -40,7 +40,6 @@ showPos :: BNFC'Position -> String
 showPos (Just (line, col)) = show line ++ ":" ++ show col
 showPos Nothing = "??:??"
 
-
 showErr :: Error -> String
 showErr (Error desc loc) = desc ++ "\n" ++ showPos loc
 
@@ -349,9 +348,6 @@ checkStatement (C.SExp pos e ) = do
 runType :: C.Expr -> Either Error Type
 runType e = runIdentity $ runExceptT $ runReaderT (typeOf e) emptyEnv
 runTypeMonad x env = runIdentity $ runExceptT $ runReaderT x env
-
-example :: Either Error TCEnv
-example = runTypeMonad (checkStatement (C.VarAss Nothing (C.Ident "x") (C.EVar Nothing (C.Ident "x")))) (TCEnv {types = M.fromList [(C.Ident "x", IntT), (C.Ident "y", BoolT)], blockVars = S.empty, insideFunc = Nothing, insideLoop = False})
 
 checkProgram :: C.Program -> TCMonad ()
 checkProgram (C.Program pos stmts) = do

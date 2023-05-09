@@ -82,7 +82,6 @@ getArrArgs = mapM evalArg where
         else
             return value
 
-
 allocArray :: C.BNFC'Position -> T.Type -> [Int] -> IMonad Value
 allocArray pos tp [] = throwError $ Error "Impossible - cannot create null dimensional array" pos
 allocArray pos (T.ArrT tp) (s:rest) = do
@@ -242,14 +241,7 @@ eval (C.EApp pos ident fnArgs) = do
             prepareEnvForFExecution pos prest argrest newEnv
         prepareEnvForFExecution pos _ _ _ = throwError $ Error "Impossible - arguments/parameters don't match" pos
 
-
-
-
-
-
-
 execBlock :: C.Block -> IMonad Flag
-
 execBlock (C.Block pos []) = return NoF
 execBlock  (C.Block pos (s:stmts)) = do
     newEnv <- exec s
@@ -355,7 +347,6 @@ exec (C.ArrElAss pos ident idxs expr) = do
 
     Just loc <- asks (M.lookup ident . env)
 
-
     Just arrPtr <- gets (M.lookup loc . store)
 
     case arrPtr of
@@ -364,7 +355,6 @@ exec (C.ArrElAss pos ident idxs expr) = do
             setArray arrPtr indices val pos
 
             ask
-
 
 exec (C.FnDef pos tp ident params block) = do
     e <- ask
@@ -386,9 +376,6 @@ exec (C.FnDef pos tp ident params block) = do
             go (C.ArgVal pos tp ident) = ArgVal ident
             go (C.ArgRef pos tp ident) = ArgRef ident
 
-
-
-
 execProgram :: C.Program -> IMonad ()
 execProgram (C.Program pos block) = do
     execBlock (C.Block pos block)
@@ -400,4 +387,3 @@ runProgram prog = do
     case res of
         Right _ -> return $ Right ()
         Left err -> return $ Left err
-
