@@ -61,9 +61,6 @@ Obowiązują typowe zasady widoczności - zmienne zadeklarowane w bloku nie są 
 
 Ogólnie można patrzec na ten język jak na Latte z tablicami, obsługą wcięć i brakiem typu void.
 
-# Negocjacje
-Jeśli coś jest zbyt ubogie i nie zasługuje na opisaną ilość punktów - np. brak wzajemnej rekurencji, jestem gotów dodać do języka pętlę foreach.
-
 # Nietypowe konstrukcje
 Deklaracje i tworzenie tablic:
 ```
