@@ -78,12 +78,13 @@ getArrArgs = mapM evalArg where
         v1 <- eval e
         let IntV value = v1
         if value < 0 then
-            throwError $ Error {desc = "Runtime Error: Cannot create array with one dimension less or equal to 0", location = pos}
+            throwError $ Error {desc = "Runtime Error: Cannot read array indices with one dimension less than 0", location = pos}
         else
             return value
 
 allocArray :: C.BNFC'Position -> T.Type -> [Int] -> IMonad Value
 allocArray pos tp [] = throwError $ Error "Impossible - cannot create null dimensional array" pos
+allocArray pos _ (0:rest) = throwError $ Error "Runtime error - cannot create an array with one dimension equal 0" pos
 allocArray pos (T.ArrT tp) (s:rest) = do
     val <- case tp of
         T.IntT -> return (ArrV $ createArray (IntV 0) s)
