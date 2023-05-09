@@ -78,13 +78,13 @@ getArrArgs = mapM evalArg where
         v1 <- eval e
         let IntV value = v1
         if value < 0 then
-            throwError $ Error {desc = "Runtime Error: Cannot read array indices with one dimension less than 0", location = pos}
+            throwError $ Error {desc = "Cannot read array indices with one dimension less than 0", location = pos}
         else
             return value
 
 allocArray :: C.BNFC'Position -> T.Type -> [Int] -> IMonad Value
 allocArray pos tp [] = throwError $ Error "Impossible - cannot create null dimensional array" pos
-allocArray pos _ (0:rest) = throwError $ Error "Runtime error - cannot create an array with one dimension equal 0" pos
+allocArray pos _ (0:rest) = throwError $ Error "Cannot create an array with one dimension equal 0" pos
 allocArray pos (T.ArrT tp) (s:rest) = do
     val <- case tp of
         T.IntT -> return (ArrV $ createArray (IntV 0) s)
@@ -107,7 +107,7 @@ accessArray ptrOrVal [] pos = return ptrOrVal
 accessArray (ArrPtr loc) (s:rest) pos = do
     Just (ArrV arr) <- gets (M.lookup loc . store)
     if s >= size arr
-        then throwError $ Error "Runtime error - access past end of array" pos
+        then throwError $ Error "Access past end of array" pos
         else do
             let Just next = M.lookup s $ contents arr
 
@@ -119,7 +119,7 @@ setArray _ [] _ pos = throwError $ Error "Impossible - invalid array assign" pos
 setArray (ArrPtr loc) [idx] val pos = do
     Just (ArrV arr) <- gets (M.lookup loc . store)
     if idx >= size arr then
-        throwError $ Error "Runtime error - assignment past end of array" pos
+        throwError $ Error "Assignment past end of array" pos
     else do
         let newArr = arr {contents = M.insert idx val (contents arr)}
         modify (\s -> s {store = M.insert loc (ArrV newArr) (store s)} )
@@ -150,7 +150,7 @@ eval (C.EMul pos e1 op e2) = do
 
     case (op, v2) of
         (C.Times _, _) -> return $ IntV (v1 * v2)
-        (_, 0) -> throwError $ Error "Runtime Error: Division by 0" pos
+        (_, 0) -> throwError $ Error "Division by 0" pos
         (C.Div _, _) -> return $ IntV (v1 `div` v2)
         (C.Mod _, _) -> return $ IntV (v1 `mod` v2)
 
@@ -200,7 +200,7 @@ eval (C.EArrGet pos ident args) = do
     Just loc <- asks (M.lookup ident . env)
     Just arrPtr <- gets (M.lookup loc . store)
     case arrPtr of
-        (ArrPtr (-1)) -> throwError $ Error "Runtime error - trying to access uninitialized array" pos
+        (ArrPtr (-1)) -> throwError $ Error "Trying to access uninitialized array" pos
         _validArr -> accessArray arrPtr parsedArgs pos
     
 
@@ -351,7 +351,7 @@ exec (C.ArrElAss pos ident idxs expr) = do
     Just arrPtr <- gets (M.lookup loc . store)
 
     case arrPtr of
-        (ArrPtr (-1)) -> throwError $ Error "Runtime error - assignment to uninitialized array" pos
+        (ArrPtr (-1)) -> throwError $ Error "Assignment to uninitialized array" pos
         _validPtr -> do
             setArray arrPtr indices val pos
 

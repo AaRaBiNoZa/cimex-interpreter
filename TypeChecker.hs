@@ -72,12 +72,12 @@ getArrayDimSize :: Type -> C.BNFC'Position -> TCMonad Int
 getArrayDimSize arr@(ArrT t) pos = go arr pos where
     go :: Type -> C.BNFC'Position -> TCMonad Int
     go tp position = case tp of
-        FunT _ _ -> throwError $ Error "Impossible! Invalid array type: functions cannot be elements of an array" pos
+        FunT _ _ -> throwError $ Error "Impossible - invalid array type: functions cannot be elements of an array" pos
         ArrT tp2 -> do
             rest  <- go tp2 position
             return $ rest + 1
         _basicType -> return 0
-getArrayDimSize _notArray pos = throwError $ Error "Impossible! Expected array" pos
+getArrayDimSize _notArray pos = throwError $ Error "Impossible - expected array" pos
 
 isArray :: Type -> Bool
 isArray (ArrT _) = True
@@ -236,11 +236,11 @@ checkStatement (C.FnDef pos retType ident params block) = do
     where
         paramSignature :: C.Arg -> TCMonad (Type, Bool)
         paramSignature (C.ArgVal pos tp ident) = case parseType tp of
-            FunT _ _ -> throwError $ Error "Impossible! Functions cannot be function parameters" pos
+            FunT _ _ -> throwError $ Error "Impossible - Functions cannot be function parameters" pos
             goodType -> return (goodType, False)
         paramSignature (C.ArgRef pos tp ident) = do
             case parseType tp of
-                FunT _ _ -> throwError $ Error "Impossible! Functions cannot be function parameters" pos
+                FunT _ _ -> throwError $ Error "Impossible - Functions cannot be function parameters" pos
                 ArrT _ -> throwError $ Error "Arrays are passed by reference by default - cannot get reference to reference" pos
                 goodTp -> return (goodTp, True)
 
