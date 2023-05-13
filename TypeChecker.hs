@@ -55,7 +55,6 @@ parseType  (C.Str pos) = StrT
 parseType (C.Bool pos) = BoolT
 parseType (C.Arr pos t) = ArrT (parseType t)
 
-
 checkTypeIsIn :: Type -> Set Type -> C.BNFC'Position -> String -> TCMonad ()
 checkTypeIsIn t good pos msg = do
     if S.member t good then
@@ -103,12 +102,15 @@ getArrayIndicesSize ((C.ArrIdx pos e):xs) msg = do
     return $ rest + 1
 
 -- TYPECHECKER
-
 typeOf :: C.Expr -> TCMonad Type
 typeOf (C.ELitTrue pos) = return BoolT
+
 typeOf (C.ELitFalse pos) = return BoolT
+
 typeOf (C.ELitInt pos _) = return IntT
+
 typeOf (C.EString pos _) = return StrT
+
 typeOf (C.EVar pos v) = do
     typesEnv <- asks types
     case M.lookup v typesEnv of
@@ -257,6 +259,7 @@ checkStatement (C.FnDef pos retType ident params block) = do
         createBlockVarsAndTypesFromParams ((C.ArgRef pos tp ident):rest) = createBlockVarsAndTypesFromParams ((C.ArgVal pos tp ident):rest)
 
 checkStatement (C.Empty pos) = ask
+
 checkStatement (C.BStmt pos block) = do
     env <- ask
     local (const env {blockVars = S.empty}) $ checkBlock block
@@ -333,6 +336,7 @@ checkStatement (C.While pos e stmt) = do
 checkStatement (C.Break pos) = do
     isInLoop <- asks insideLoop
     if isInLoop then ask else throwError $ Error "Break outside of loop" pos
+    
 checkStatement (C.Cont pos) = do 
     isInLoop <- asks insideLoop
     if isInLoop then ask else throwError $ Error "Continue outside of loop" pos
@@ -344,10 +348,6 @@ checkStatement (C.Print pos e) = do
 checkStatement (C.SExp pos e ) = do
     typeOf e
     ask
-
-runType :: C.Expr -> Either Error Type
-runType e = runIdentity $ runExceptT $ runReaderT (typeOf e) emptyEnv
-runTypeMonad x env = runIdentity $ runExceptT $ runReaderT x env
 
 checkProgram :: C.Program -> TCMonad ()
 checkProgram (C.Program pos stmts) = do

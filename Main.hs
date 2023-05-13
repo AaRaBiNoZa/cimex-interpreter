@@ -69,9 +69,9 @@ usage = do
   putStrLn $ unlines
     [ "usage: Call with one of the following argument combinations:"
     , "  --help          Display this help message."
-    , "  (no arguments)  Parse stdin verbosely."
+    , "  (no arguments)  Parse stdin silently."
     , "  (files)         Parse content of files silently."
-    , "  -v (files)      Silent mode. Parse content of files verbosely."
+    , "  -v (files)      Verbose mode. Parse content of files verbosely."
     ]
 
 main :: IO ()

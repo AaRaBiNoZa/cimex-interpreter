@@ -32,7 +32,6 @@ data Array a = Array {
     size :: Int
 } deriving (Show, Eq, Ord)
 
-
 data FnArg = ArgVal C.Ident | ArgRef C.Ident
     deriving (Show, Eq, Ord)
 
@@ -62,6 +61,7 @@ instance Show Value where
 
 type IMonad a = StateT IState (ReaderT IEnv (ExceptT Error IO)) a
 
+-- Utility
 newLoc :: IMonad Loc
 newLoc = do
     newLocation <- gets newloc
@@ -99,7 +99,6 @@ allocArray pos (T.ArrT tp) (s:rest) = do
     modify (\s -> IState {store = M.insert newLocation val $ store s, newloc = newloc s})
 
     return (ArrPtr newLocation)
-
 allocArray pos _ _ = throwError $ Error "Impossible - wrong type for alloc array" pos
 
 accessArray :: Value -> [Int] -> C.BNFC'Position -> IMonad Value
@@ -129,6 +128,7 @@ setArray (ArrPtr loc) (i:idxs) val pos = do
     setArray next idxs val pos
 setArray _ _ _ pos = throwError $ Error "Impossible - invalid array assign" pos
 
+-- Interpreter
 eval :: C.Expr -> IMonad Value
 eval (C.EVar pos ident) = do
     Just loc <- asks (M.lookup ident . env)
@@ -136,14 +136,19 @@ eval (C.EVar pos ident) = do
     return val
 
 eval (C.ELitInt pos int) = return (IntV (fromInteger int))
+
 eval (C.ELitTrue pos) = return (BoolV True)
+
 eval (C.ELitFalse pos) = return (BoolV False)
+
 eval (C.Neg pos e) = do
     IntV v <- eval e
     return $ IntV (- v)
+
 eval (C.Not pos e) = do
     BoolV bool <- eval e
     return $ BoolV (not bool)
+
 eval (C.EMul pos e1 op e2) = do
     IntV v1 <- eval e1
     IntV v2 <- eval e2
@@ -182,7 +187,6 @@ eval (C.EAnd pos e1 e2) = do
 
     return $ BoolV (bool1 && bool2)
 
-
 eval (C.EOr pos e1 e2) = do
     BoolV bool1 <- eval e1
     BoolV bool2 <- eval e2
@@ -194,7 +198,6 @@ eval (C.ECrtArr pos tp args) = do
     parsedArgs <- getArrArgs args
     allocArray pos parsedTp parsedArgs
 
-
 eval (C.EArrGet pos ident args) = do
     parsedArgs <- getArrArgs args
     Just loc <- asks (M.lookup ident . env)
@@ -203,7 +206,6 @@ eval (C.EArrGet pos ident args) = do
         (ArrPtr (-1)) -> throwError $ Error "Trying to access uninitialized array" pos
         _validArr -> accessArray arrPtr parsedArgs pos
     
-
 eval (C.EString pos str) = return $ StrV str
 
 eval (C.EApp pos ident fnArgs) = do
