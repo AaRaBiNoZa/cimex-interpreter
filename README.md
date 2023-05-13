@@ -7,7 +7,7 @@ make
 ```
 Interpreter można uruchomić na plikach w trybie cichym (domyślnie) lub z dodatkowymi informacjami (wypisanie drzewa abstrakcyjnego programu, pretty print kodu):
 - zwykłe uruchomienie za pomocą `./interpreter plik`
-- dodatkowe informacje `interpreter -v plik`
+- dodatkowe informacje `./interpreter -v plik`
 
 W przypadku czytania ze standardowego wejścia, jest dostępna tylko opcja cicha. (uruchamiamy oczywiście przez `./interpreter`)
 
