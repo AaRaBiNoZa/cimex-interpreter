@@ -288,7 +288,9 @@ checkStatement (C.VarAss pos ident expr) = do
     identType <- asks (M.lookup ident . types)
     case identType of
         Nothing -> throwError $ Error "Assignment to undeclared variable" pos
-        Just tp -> if tp /= eType then throwError $ Error "Wrong expression type" pos else ask
+        Just tp -> do
+            checkTypeIs eType tp pos "Variable assignment"
+            ask
 
 checkStatement (C.ArrElAss pos ident indices expr) = do
     identType <- asks (M.lookup ident . types)
